@@ -379,6 +379,19 @@ function updateTopbar() {
   document.getElementById('topbar-name').textContent = name;
 }
 
+function logout() {
+  STATE.role     = null;
+  STATE.identity = null;
+  saveLocal();
+  document.getElementById('app').style.display          = 'none';
+  document.getElementById('identity-screen').style.display = 'none';
+  document.getElementById('auth-screen').style.display  = 'flex';
+  document.getElementById('auth-pw').value = '';
+  document.getElementById('auth-error').style.display   = 'none';
+  document.getElementById('auth-pw').classList.remove('error');
+  setAuthRole('member');
+}
+
 // ── ICONS ────────────────────────────────────────────────────
 const icons = {
   clipboard: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/><line x1="9" y1="12" x2="15" y2="12"/><line x1="9" y1="16" x2="13" y2="16"/></svg>`,
@@ -671,11 +684,14 @@ function renderPrematchCaptain() {
 }
 
 function renderPrematchGroupCard(group, gi, memberNames, teams) {
-  // Grey out: drive team + anyone in pits + anyone in OTHER scout groups
-  const otherGroupMembers = STATE.prematchGroups
-    .filter((_, i) => i !== gi)
-    .flatMap(g => g.members);
+  // Grey out members: drive team + pits + members of other groups
+  const otherGroupMembers = STATE.prematchGroups.filter((_,i)=>i!==gi).flatMap(g=>g.members);
   const greyedMembers = [...new Set([...STATE.driveTeam, ...STATE.prematchPits, ...otherGroupMembers])];
+
+  // Grey out teams: teams already assigned to other groups
+  const otherGroupTeams = STATE.prematchGroups.filter((_,i)=>i!==gi)
+    .flatMap(g=>(g.teams||[]).map(t=>t.number+' '+t.name));
+  const greyedTeams = [...new Set(otherGroupTeams)];
 
   return `
     <div class="card" id="pmg-${gi}">
@@ -695,7 +711,7 @@ function renderPrematchGroupCard(group, gi, memberNames, teams) {
         </div>
         <div class="form-group mb-8">
           <label class="form-label">Teams to Scout</label>
-          <div class="pill-select" id="pmg-teams-${gi}">${renderPillSelect(teams.map(t=>t.number+' '+t.name),(group.teams||[]).map(t=>t.number+' '+t.name),[])}</div>
+          <div class="pill-select" id="pmg-teams-${gi}">${renderPillSelect(teams.map(t=>t.number+' '+t.name),(group.teams||[]).map(t=>t.number+' '+t.name),greyedTeams,`onPrematchGroupTeamToggle(this,${gi})`)}</div>
         </div>
       </div>
     </div>`;
@@ -735,10 +751,9 @@ function autoSavePlayoff()  { savePlayoffAssignments(true); }
 // ── PREMATCH AUTO-SAVE HANDLERS ───────────────────────────────
 function onPrematchDriveToggle(el) {
   pillToggle(el);
-  // Sync drive team across all sections immediately
   STATE.driveTeam = getPillSelected('pm-drive-team');
   savePrematchAssignments(true);
-  // Re-render other sections' drive team pills if they're visible (will sync on next render)
+  renderPrematchCaptain();
 }
 
 function onPrematchPitsToggle(el) {
@@ -752,7 +767,19 @@ function onPrematchGroupMemberToggle(el, gi) {
   pillToggle(el);
   STATE.prematchGroups[gi].members = getPillSelected('pmg-members-' + gi);
   savePrematchAssignments(true);
-  renderPrematchCaptain(); // refresh grey-out state for other groups
+  renderPrematchCaptain();
+}
+
+function onPrematchGroupTeamToggle(el, gi) {
+  pillToggle(el);
+  const teamVals = getPillSelected('pmg-teams-' + gi);
+  const teams    = STATE.setup.teams;
+  STATE.prematchGroups[gi].teams = teamVals.map(v => {
+    const num = v.split(' ')[0];
+    return teams.find(t => t.number === num) || { number: num, name: v };
+  });
+  savePrematchAssignments(true);
+  renderPrematchCaptain();
 }
 
 function addPrematchGroup() {
@@ -774,15 +801,10 @@ function savePrematchAssignments(silent = false) {
   if (dtEl)   STATE.driveTeam    = getPillSelected('pm-drive-team');
   if (pitsEl) STATE.prematchPits = getPillSelected('pm-pits');
 
-  // Collect scout group members + teams from DOM
+  // Collect scout group members from DOM (teams are updated directly in STATE by their handler)
   STATE.prematchGroups.forEach((group, gi) => {
-    const memsEl  = document.getElementById('pmg-members-' + gi);
-    const teamsEl = document.getElementById('pmg-teams-' + gi);
-    if (memsEl)  group.members = getPillSelected('pmg-members-' + gi);
-    if (teamsEl) {
-      const teamVals = getPillSelected('pmg-teams-' + gi);
-      group.teams = teamVals.map(v => { const num = v.split(' ')[0]; return teams.find(t=>t.number===num)||{number:num,name:v}; });
-    }
+    const memsEl = document.getElementById('pmg-members-' + gi);
+    if (memsEl) group.members = getPillSelected('pmg-members-' + gi);
   });
   saveLocal();
   apiPost({ type: 'assignments', assignments: buildAssignments() });
@@ -1236,6 +1258,9 @@ function renderPlayoffsCaptain() {
     const otherGroupMembers = STATE.playoffGroups
       .filter((_,i)=>i!==gi).flatMap(g=>g.members||[]);
     const greyedMembers = [...new Set([...dt, ...plPits, ...otherGroupMembers])];
+    const greyedTeams = [...new Set(STATE.playoffGroups
+      .filter((_,i)=>i!==gi)
+      .flatMap(g=>(g.targets||[]).map(t=>t.number+' '+t.name)))];
 
     html += `
       <div class="card">
@@ -1257,7 +1282,7 @@ function renderPlayoffsCaptain() {
           <div class="form-group">
             <label class="form-label">Target Teams to Recruit</label>
             <div class="pill-select" id="plg-teams-${gi}">
-              ${renderPillSelect(teams.map(t=>t.number+' '+t.name),(group.targets||[]).map(t=>t.number+' '+t.name),[],`onPlayoffGroupTeamToggle(this,${gi})`)}
+              ${renderPillSelect(teams.map(t=>t.number+' '+t.name),(group.targets||[]).map(t=>t.number+' '+t.name),greyedTeams,`onPlayoffGroupTeamToggle(this,${gi})`)}
             </div>
           </div>
           <div class="form-group mb-8">
@@ -1304,6 +1329,7 @@ function onPlayoffGroupTeamToggle(el, gi) {
     return teams.find(t=>t.number===num) || { number: num, name: v };
   });
   savePlayoffAssignments(true);
+  renderPlayoffsCaptain();
 }
 
 function onPlayoffGroupNameChange(gi, val) {
