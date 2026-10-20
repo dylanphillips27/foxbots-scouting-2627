@@ -8,7 +8,7 @@ const CONFIG = {
   memberHash:  '52fa766a9473d5573b5c4af10068b212d398a27eb450e8ccc1b99186a8624073',
   captainHash: '4eee6a5fd1048c7206efd395e019b7a6207521c36371c273995cfc35b0e1e797',
 
-  scriptUrl: 'https://script.google.com/macros/s/AKfycbwUBmXMxzK5UE98kOHBfZrnHifoS2Aw6iUmvGhRiXaHukZzmeBZkXDORP7_-SQEmip6/exec',
+  scriptUrl: 'https://script.google.com/macros/s/AKfycbxMUvsHW9lBF3RUDzbxKLR53UpCyobKYvt5ywW2JbWr8UoJI1YZE1L1AXnL7fKt3ZKE/exec',
 
   // Pre-match scouting form — edit per season
   // type: 'radio' | 'stepper' | 'textarea' | 'toggle'
@@ -334,7 +334,7 @@ async function loadAllData() {
       if (setupMap.rotationInterval) STATE.setup.rotationInterval = setupMap.rotationInterval;
       if (setupMap.teams)           STATE.setup.teams           = setupMap.teams;
     }
-    if (data.roster      && Array.isArray(data.roster))      STATE.roster      = data.roster;
+    if (data.roster && Array.isArray(data.roster) && data.roster.length > 0) STATE.roster = data.roster;
     if (data.assignments && Array.isArray(data.assignments)) {
       const driveRow = data.assignments.find(a=>a.phase==='driveteam');
       if (driveRow) STATE.driveTeam = tryParse(driveRow.members, []);
