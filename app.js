@@ -8,7 +8,7 @@ const CONFIG = {
   memberHash:  '52fa766a9473d5573b5c4af10068b212d398a27eb450e8ccc1b99186a8624073',
   captainHash: '4eee6a5fd1048c7206efd395e019b7a6207521c36371c273995cfc35b0e1e797',
 
-  scriptUrl: 'https://script.google.com/macros/s/AKfycbxMUvsHW9lBF3RUDzbxKLR53UpCyobKYvt5ywW2JbWr8UoJI1YZE1L1AXnL7fKt3ZKE/exec',
+  scriptUrl: 'https://script.google.com/macros/s/AKfycbwQBxtQIFbBFm_laJvvfmfa9HDdwX30mEJqAHgUHES6F42Fej4HqiykymVKAyk_A5ED/exec',
 
   // Pre-match scouting form — edit per season
   // type: 'radio' | 'stepper' | 'textarea' | 'toggle'
@@ -171,7 +171,12 @@ function escHtml(str) {
 }
 
 function tryParse(str, def) {
-  try { return JSON.parse(str); } catch(e) { return def; }
+  // The sheet can hand back JSON that was encoded twice (a JSON string holding JSON), so unwrap up to 3 layers
+  try {
+    let x = str;
+    for (let i = 0; i < 3 && typeof x === 'string'; i++) x = JSON.parse(x);
+    return (x === undefined || x === null) ? def : x;
+  } catch(e) { return def; }
 }
 
 // ── BACKEND ──────────────────────────────────────────────────
@@ -303,8 +308,8 @@ function switchIdentity() {
 }
 
 // ── APP LAUNCH ───────────────────────────────────────────────
-async function loadAllData() {
-  showLoading('Syncing data...');
+async function loadAllData(quiet = false) {
+  if (!quiet) showLoading('Syncing data...');
   // The active competition lives in the sheet so every device (phone, laptop) follows it
   const active = await apiGet('activeCompetition');
   if (typeof active === 'string' && active) {
@@ -328,6 +333,7 @@ async function loadAllData() {
       if (setupMap.numMatches)      STATE.setup.numMatches      = setupMap.numMatches;
       if (setupMap.rotationInterval) STATE.setup.rotationInterval = setupMap.rotationInterval;
       if (setupMap.teams)           STATE.setup.teams           = setupMap.teams;
+      if (setupMap.aliases && typeof setupMap.aliases === 'object') STATE.setup.aliases = setupMap.aliases;
     }
     if (data.roster && Array.isArray(data.roster) && data.roster.length > 0) STATE.roster = data.roster;
     if (data.assignments && Array.isArray(data.assignments)) {
@@ -366,6 +372,7 @@ async function loadAllData() {
   }
   hideLoading();
   retryQueue();
+  updateReviewBadge();
 }
 
 function launchApp() {
@@ -373,6 +380,19 @@ function launchApp() {
   updateTopbar();
   buildTabBar();
   switchTab(STATE.role === 'captain' ? 'setup' : 'prematch');
+  if (STATE.role === 'captain') {
+    updateReviewBadge();
+    const n = countReviewItems();
+    if (n) showToast(`${n} team entr${n===1?'y needs':'ies need'} your review in Results`, 'error');
+  }
+}
+
+// Captain notification: show how many entries need review on the Results tab
+function updateReviewBadge() {
+  const label = document.querySelector('#tab-results span');
+  if (!label) return;
+  const n = STATE.role === 'captain' ? countReviewItems() : 0;
+  label.textContent = n ? `Results (${n})` : 'Results';
 }
 
 function updateTopbar() {
@@ -908,7 +928,10 @@ function openPrematchForm(number, name) {
   currentFormTeam  = { number, name };
   currentFormState = {};
   const existing = findGroupPrematch(number);
-  if (existing) { try { currentFormState = JSON.parse(existing.responses); } catch(e) {} }
+  if (existing) {
+    const saved = tryParse(existing.responses, {});
+    if (saved && typeof saved === 'object' && !Array.isArray(saved)) currentFormState = saved;
+  }
   openDrawer(`Scout: ${number} ${name}`, buildPrematchFormHtml());
 }
 
@@ -944,7 +967,7 @@ function buildFormQuestion(q) {
         <label class="form-label">${escHtml(q.label)}</label>
         <div class="stepper">
           <button class="stepper-btn" onclick="stepperChange('${q.id}',-1)">−</button>
-          <div class="stepper-val" id="sv-${q.id}">${val||0}</div>
+          <div class="stepper-val" id="sv-${q.id}">${Number(val)||0}</div>
           <button class="stepper-btn" onclick="stepperChange('${q.id}',1)">+</button>
         </div>
       </div>`;
@@ -966,8 +989,11 @@ function setFormVal(id, el, type) {
 }
 
 function stepperChange(id, delta) {
-  currentFormState[id] = Math.max(0, (currentFormState[id]||0) + delta);
-  document.getElementById('sv-'+id).textContent = currentFormState[id];
+  if (!currentFormState || typeof currentFormState !== 'object') currentFormState = {};
+  const cur = Number(currentFormState[id]) || 0;
+  currentFormState[id] = Math.max(0, cur + delta);
+  const el = document.getElementById('sv-'+id);
+  if (el) el.textContent = String(currentFormState[id]);
 }
 
 function toggleFormVal(id) {
@@ -1268,8 +1294,8 @@ function buildMatchFormHtml() {
         <div class="scout-section-header ${i<2?'orange':'teal'}">${labels[i]}</div>
         <div style="margin-top:12px">
           <div class="form-group">
-            <label class="form-label">Team Number / Name</label>
-            <input class="form-input" value="${escHtml(t.team||'')}"
+            <label class="form-label">Team Number</label>
+            <input class="form-input" value="${escHtml(t.team||'')}" inputmode="numeric" autocomplete="off"
               onchange="currentMatchForm.teams[${i}].team=this.value" placeholder="e.g. 12345">
           </div>
           <div class="form-group mb-8">
@@ -1308,6 +1334,11 @@ async function submitMatchForm() {
   };
   STATE.matchData = STATE.matchData.filter(d => !(d.submitter === entry.submitter && Number(d.matchNumber) === Number(entry.matchNumber)));
   STATE.matchData.push(entry);
+  // Anything that isn't a known team number still gets saved; the captain reviews it in Results
+  const unknown = slots.filter(s => s.team && !resolveTeamInput(s.team).team).map(s => s.team);
+  if (unknown.length) {
+    setTimeout(() => showToast(`Could not recognize "${unknown.join('", "')}" as a team number/name. Please double check the input or have your captain review it.`, 'error'), 400);
+  }
   saveLocal();
   closeDrawer();
   renderMatchMember();
@@ -1574,11 +1605,38 @@ function setPlayoffNotes(number, name, notes)   { return savePlayoffContact(numb
 function renderResults() {
   try {
     renderResultsInner();
+    updateReviewBadge();
   } catch (e) {
     console.error(e);
     document.getElementById('results-content').innerHTML = `
       <div class="alert alert-orange">${icons.warn} Couldn't build the results: ${escHtml(e.message)}</div>`;
   }
+}
+
+// Resolve what a scout typed into a team field. Only known team numbers (or a number the captain
+// has already assigned, or an exact team name) count as resolved — everything else needs captain review.
+function resolveTeamInput(raw) {
+  const s = String(raw == null ? '' : raw).trim().replace(/^#/, '');
+  if (!s) return { team: null, empty: true };
+  const teams = STATE.setup.teams || [];
+  const alias = (STATE.setup.aliases || {})[s.toLowerCase()];
+  if (alias) { const t = teams.find(t => String(t.number) === String(alias)); if (t) return { team: t }; }
+  let t = teams.find(t => String(t.number) === s);
+  if (!t) t = teams.find(t => String(t.name || '').toLowerCase() === s.toLowerCase());
+  return { team: t || null };
+}
+
+let reviewItems = [];
+const PLAYOFF_LABEL = { good: 'Went well', bad: "Didn't go well", none: 'Could not contact', pending: 'Not contacted yet' };
+
+function countReviewItems() {
+  let n = 0;
+  (STATE.matchData || []).forEach(d => {
+    const arr = tryParse(d.teams, []);
+    (Array.isArray(arr) ? arr : []).forEach(t => { if (t && t.team && !resolveTeamInput(t.team).team) n++; });
+  });
+  (STATE.prematchData || []).forEach(d => { if (!resolveTeamInput(d.teamNumber).team) n++; });
+  return n;
 }
 
 function renderResultsInner() {
@@ -1590,56 +1648,78 @@ function renderResultsInner() {
   }
 
   const teamData = {};
-  teams.forEach(t => { teamData[t.number] = { team: t, prematch: [], match: [], flagged: false }; });
+  teams.forEach(t => { teamData[String(t.number)] = { team: t, prematch: [], match: [], playoff: [] }; });
+  reviewItems = [];
 
   STATE.prematchData.forEach(d => {
-    const result = fuzzyMatchTeam(d.teamNumber || d.teamName, teams);
-    if (result && result.team) {
-      const key = result.team.number;
-      if (!teamData[key]) teamData[key] = { team: result.team, prematch: [], match: [], flagged: false };
-      teamData[key].prematch.push({ ...d, matchConfidence: result.confidence });
-      if (result.confidence === 'flagged') teamData[key].flagged = true;
-    }
+    const r = resolveTeamInput(d.teamNumber);
+    if (r.team) teamData[String(r.team.number)].prematch.push(d);
+    else reviewItems.push({ kind: 'Pre-match report', raw: String(d.teamNumber), submitter: d.submitter, notes: '' });
   });
 
   STATE.matchData.forEach(d => {
     const arr = tryParse(d.teams, []);
     (Array.isArray(arr) ? arr : []).forEach(t => {
-      if (!t || !t.team) return;
-      const result = fuzzyMatchTeam(t.team, teams);
-      if (result && result.team) {
-        const key = result.team.number;
-        if (!teamData[key]) teamData[key] = { team: result.team, prematch: [], match: [], flagged: false };
-        teamData[key].match.push({ match: d.matchNumber, location: d.location, notes: t.notes, submitter: d.submitter, confidence: result.confidence });
-        if (result.confidence === 'flagged') teamData[key].flagged = true;
-      }
+      if (!t || !String(t.team || '').trim()) return;
+      const r = resolveTeamInput(t.team);
+      if (r.team) teamData[String(r.team.number)].match.push({ match: d.matchNumber, location: d.location, notes: t.notes, submitter: d.submitter });
+      else reviewItems.push({ kind: 'Match ' + d.matchNumber, raw: String(t.team).trim(), submitter: d.submitter, notes: t.notes || '' });
     });
   });
 
+  (STATE.playoffData || []).forEach(d => {
+    const td = teamData[String(d.teamNumber)];
+    if (td && (d.status && d.status !== 'pending' || d.notes)) td.playoff.push(d);
+  });
+
+  // ── Captain review queue for team entries we couldn't match to a team number
+  const reviewHtml = reviewItems.length ? `
+    <div class="card" style="margin-bottom:14px;border:2px solid var(--orange)">
+      <div class="card-header"><div class="card-header-icon">${icons.warn}</div>
+        <div><div class="card-title">Needs review (${reviewItems.length})</div>
+        <div class="card-subtitle">These weren't a known team number. Pick the right team for each.</div></div>
+      </div>
+      <div class="card-body">
+        ${reviewItems.map((it, i) => `
+          <div style="padding:10px 0;${i?'border-top:1px solid var(--border)':''}">
+            <div style="font-size:14px"><strong>"${escHtml(it.raw)}"</strong> · ${escHtml(it.kind)} · by ${escHtml(it.submitter)}</div>
+            ${it.notes ? `<div class="text-sm text-muted" style="margin:4px 0">${escHtml(it.notes)}</div>` : ''}
+            <div style="display:flex;gap:8px;margin-top:8px">
+              <select class="form-input" id="alias-sel-${i}" style="flex:1">
+                <option value="">Choose team…</option>
+                ${teams.map(t => `<option value="${escHtml(t.number)}">${escHtml(t.number)} ${escHtml(t.name)}</option>`).join('')}
+              </select>
+              <button class="btn btn-sm btn-primary" onclick="assignAlias(${i})">Assign</button>
+            </div>
+          </div>`).join('')}
+      </div>
+    </div>` : '';
+
   const html = Object.values(teamData).map(td => {
-    const { team, prematch, match, flagged } = td;
+    const { team, prematch, match, playoff } = td;
     const total = prematch.length + match.length;
+    const pl = playoff[playoff.length - 1];
     return `
       <div class="result-team-card">
-        <div class="result-team-header" onclick="toggleResultCard('rc-${team.number}')">
+        <div class="result-team-header" onclick="toggleResultCard('rc-${escHtml(team.number)}')">
           <div>
             <div class="result-team-num">${escHtml(team.number)}</div>
             <div class="result-team-name">${escHtml(team.name)}</div>
           </div>
           <div style="display:flex;align-items:center;gap:8px">
-            ${flagged?`<span class="chip chip-orange">⚠ Flag</span>`:''}
+            ${pl ? `<span class="chip ${pl.status==='good'?'chip-teal':'chip-orange'}">${escHtml(PLAYOFF_LABEL[pl.status]||'Playoff note')}</span>` : ''}
             <span class="chip chip-teal">${total} report${total!==1?'s':''}</span>
             <svg class="result-expand" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20"><polyline points="6 9 12 15 18 9"/></svg>
           </div>
         </div>
-        <div id="rc-${team.number}" style="display:none">
+        <div id="rc-${escHtml(team.number)}" style="display:none">
           ${prematch.length ? `
             <div style="padding:12px 18px 0"><div class="section-label">Pre-Match Reports (${prematch.length})</div></div>
             ${prematch.map(r=>`
               <div class="list-item" data-report="${escHtml(JSON.stringify(r))}" onclick="openResultDetail(this.dataset.report)">
                 <div class="list-item-main">
                   <div class="list-item-title">by ${escHtml(r.submitter)}</div>
-                  <div class="list-item-sub">${r.matchConfidence==='fuzzy'?'⚠ Fuzzy match':'Exact match'}</div>
+                  <div class="list-item-sub">${escHtml(prematchSummary(r))}</div>
                 </div>
                 <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
               </div>`).join('')}` : ''}
@@ -1647,19 +1727,57 @@ function renderResultsInner() {
             <div style="padding:12px 18px 0"><div class="section-label">Match Notes (${match.length})</div></div>
             ${match.map(r=>`
               <div class="list-item">
-                <div class="match-badge ${r.location==='Pits'?'pits':''}" style="width:36px;height:36px;font-size:12px">${r.match}</div>
+                <div class="match-badge" style="width:36px;height:36px;font-size:12px">${escHtml(r.match)}</div>
                 <div class="list-item-main">
-                  <div class="list-item-title">Match ${r.match} — ${escHtml(r.location||'Field')}</div>
+                  <div class="list-item-title">Match ${escHtml(r.match)}</div>
                   <div class="list-item-sub">${escHtml(r.notes||'No notes')}</div>
                   <div class="text-xs text-muted mt-8">by ${escHtml(r.submitter)}</div>
                 </div>
               </div>`).join('')}` : ''}
-          ${!total?`<div style="padding:16px 18px;font-size:14px;color:var(--text-3)">No data yet for this team.</div>`:''}
+          ${playoff.length ? `
+            <div style="padding:12px 18px 0"><div class="section-label">Playoff Contact</div></div>
+            ${playoff.map(r=>`
+              <div class="list-item" style="cursor:default">
+                <div class="list-item-main">
+                  <div class="list-item-title">${escHtml(PLAYOFF_LABEL[r.status]||'Note')}</div>
+                  ${r.notes ? `<div class="list-item-sub">${escHtml(r.notes)}</div>` : ''}
+                  <div class="text-xs text-muted mt-8">by ${escHtml(r.submitter)}</div>
+                </div>
+              </div>`).join('')}` : ''}
+          ${!total && !playoff.length ? `<div style="padding:16px 18px;font-size:14px;color:var(--text-3)">No data yet for this team.</div>` : ''}
         </div>
       </div>`;
   }).join('');
 
-  document.getElementById('results-content').innerHTML = html;
+  document.getElementById('results-content').innerHTML =
+    `<button class="btn btn-secondary btn-full" style="margin-bottom:14px" onclick="refreshResults()">↻ Refresh</button>` + reviewHtml + html;
+}
+
+function prematchSummary(r) {
+  const resp = tryParse(r.responses, {});
+  const answered = Object.values(resp && typeof resp === 'object' ? resp : {}).filter(v => v !== '' && v !== false && v !== 0 && v != null).length;
+  const when = r.timestamp && !isNaN(Date.parse(r.timestamp)) ? new Date(r.timestamp).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '';
+  return `${answered} answer${answered!==1?'s':''}${when ? ' · ' + when : ''}`;
+}
+
+function assignAlias(i) {
+  const it  = reviewItems[i];
+  const sel = document.getElementById('alias-sel-' + i);
+  if (!it || !sel || !sel.value) { showToast('Choose a team first', ''); return; }
+  if (!STATE.setup.aliases) STATE.setup.aliases = {};
+  STATE.setup.aliases[it.raw.toLowerCase().replace(/^#/, '')] = sel.value;
+  saveLocal();
+  apiPost({ type: 'setup', payload: STATE.setup });
+  showToast('Assigned to team ' + sel.value, 'success');
+  renderResults();
+}
+
+async function refreshResults() {
+  if (document.activeElement && document.activeElement.tagName === 'SELECT') return; // don't disturb a pick in progress
+  const open = Array.from(document.querySelectorAll('[id^="rc-"]')).filter(e => e.style.display === 'block').map(e => e.id);
+  await loadAllData(true);
+  renderResults();
+  open.forEach(id => { const el = document.getElementById(id); if (el) el.style.display = 'block'; });
 }
 
 function toggleResultCard(id) {
@@ -1698,3 +1816,8 @@ window.addEventListener('load', async () => {
   }
   retryQueue();
 });
+
+// Captain: while looking at Results, quietly pull in new scouting data every 30s
+setInterval(() => {
+  if (STATE.role === 'captain' && STATE.currentTab === 'results' && !document.hidden) refreshResults();
+}, 30000);
