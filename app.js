@@ -230,17 +230,18 @@ let authRole = 'member';
 
 function setAuthRole(role) {
   authRole = role;
-  document.getElementById('role-member').classList.toggle('active', role === 'member');
-  document.getElementById('role-captain').classList.toggle('active', role === 'captain');
 }
 
 async function attemptAuth() {
   const pw = document.getElementById('auth-pw').value;
   if (!pw) return;
   const hash = await sha256(pw);
-  const target = authRole === 'captain' ? CONFIG.captainHash : CONFIG.memberHash;
+  // One password bar: the password itself decides the role
+  if (hash === CONFIG.captainHash)      authRole = 'captain';
+  else if (hash === CONFIG.memberHash)  authRole = 'member';
+  else                                  authRole = null;
 
-  if (hash === target) {
+  if (authRole) {
     document.getElementById('auth-pw').classList.remove('error');
     document.getElementById('auth-error').style.display = 'none';
     STATE.role = authRole;
@@ -861,7 +862,7 @@ function renderPrematchMember() {
       ${teams.map(team => {
         const done = submitted.includes(String(team.number));
         return `
-          <button class="list-item" onclick="openPrematchForm('${escHtml(team.number)}','${escHtml(team.name)}')">
+          <button class="list-item" data-num="${escHtml(team.number)}" data-name="${escHtml(team.name)}" onclick="openPrematchForm(this.dataset.num,this.dataset.name)">
             <div class="match-badge" style="${done?'background:var(--green-light);color:var(--green)':''}">${done?'✓':team.number}</div>
             <div class="list-item-main">
               <div class="list-item-title">${escHtml(team.name)}</div>
@@ -1405,8 +1406,8 @@ function renderPlayoffsMember() {
           <div class="list-item-title">${escHtml(t.number)} ${escHtml(t.name)}</div>
           <div class="list-item-sub">${status==='good'?'Went well!':status==='bad'?"Didn't go well":'Not contacted yet'}</div>
           <div class="status-btn-row">
-            <button class="status-btn ${status==='good'?'good':''}" onclick="setPlayoffStatus('${escHtml(t.number)}','${escHtml(t.name)}','good')">✓ Went Well</button>
-            <button class="status-btn ${status==='bad'?'bad':''}"  onclick="setPlayoffStatus('${escHtml(t.number)}','${escHtml(t.name)}','bad')">✗ Didn't Go Well</button>
+            <button class="status-btn ${status==='good'?'good':''}" data-num="${escHtml(t.number)}" data-name="${escHtml(t.name)}" onclick="setPlayoffStatus(this.dataset.num,this.dataset.name,'good')">✓ Went Well</button>
+            <button class="status-btn ${status==='bad'?'bad':''}"  data-num="${escHtml(t.number)}" data-name="${escHtml(t.name)}" onclick="setPlayoffStatus(this.dataset.num,this.dataset.name,'bad')">✗ Didn't Go Well</button>
           </div>
         </div>
       </div>`;
