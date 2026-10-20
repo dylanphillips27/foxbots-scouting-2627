@@ -42,15 +42,6 @@ const CONFIG = {
         { id: 'end_reliable', label: 'Endgame Reliability', type: 'radio',    options: ['Never', 'Sometimes', 'Usually', 'Always'] },
         { id: 'end_notes',    label: 'Endgame Notes',       type: 'textarea' },
       ]
-    },
-    {
-      section: 'Overall',
-      color: 'teal',
-      questions: [
-        { id: 'overall_rating',   label: 'Overall Rating',    type: 'radio',    options: ['1 — Weak', '2 — Below Avg', '3 — Average', '4 — Strong', '5 — Excellent'] },
-        { id: 'overall_strategy', label: 'Best Alliance Role', type: 'radio',   options: ['Captain', 'Support', 'Defense', 'Flexible'] },
-        { id: 'overall_notes',    label: 'Additional Notes',  type: 'textarea' },
-      ]
     }
   ]
 };
@@ -141,17 +132,20 @@ function setSyncStatus(status) {
 function fuzzyMatchTeam(input, teams) {
   if (!input) return null;
   const inp = String(input).trim().toLowerCase();
+  if (!inp || !teams.length) return null;
+  // Team names can be missing or non-text (e.g. a team added by number only) — never assume a string
+  const nm = t => String(t.name == null ? '' : t.name).toLowerCase();
   let match = teams.find(t => String(t.number) === inp);
   if (match) return { team: match, confidence: 'exact' };
-  match = teams.find(t => t.name.toLowerCase() === inp);
+  match = teams.find(t => nm(t) && nm(t) === inp);
   if (match) return { team: match, confidence: 'exact' };
   match = teams.find(t => String(t.number).startsWith(inp) || inp.startsWith(String(t.number)));
   if (match) return { team: match, confidence: 'fuzzy' };
-  match = teams.find(t => t.name.toLowerCase().includes(inp) || inp.includes(t.name.toLowerCase()));
+  match = teams.find(t => nm(t) && (nm(t).includes(inp) || inp.includes(nm(t))));
   if (match) return { team: match, confidence: 'fuzzy' };
   let best = null, bestDist = Infinity;
   teams.forEach(t => {
-    const d = levenshtein(inp, t.name.toLowerCase());
+    const d = levenshtein(inp, nm(t));
     if (d < bestDist) { bestDist = d; best = t; }
     const dn = levenshtein(inp, String(t.number));
     if (dn < bestDist) { bestDist = dn; best = t; }
@@ -311,6 +305,17 @@ function switchIdentity() {
 // ── APP LAUNCH ───────────────────────────────────────────────
 async function loadAllData() {
   showLoading('Syncing data...');
+  // The active competition lives in the sheet so every device (phone, laptop) follows it
+  const active = await apiGet('activeCompetition');
+  if (typeof active === 'string' && active) {
+    if (STATE.competition !== active) {
+      STATE.competition = active;
+      saveLocal();
+    }
+  } else if (STATE.competition) {
+    // Sheet doesn't know the active competition yet (created before this feature) — publish it
+    apiPost({ type: 'activeCompetition', name: STATE.competition });
+  }
   if (!STATE.competition) { hideLoading(); return; }
   const data = await apiGet('all');
   if (data) {
@@ -347,9 +352,16 @@ async function loadAllData() {
       const plPitsRow = data.assignments.find(a=>a.phase==='playoff_pits');
       if (plPitsRow) STATE.playoffPits = tryParse(plPitsRow.members, []);
     }
-    if (data.prematch) STATE.prematchData = data.prematch;
-    if (data.match)    STATE.matchData    = data.match;
-    if (data.playoff)  STATE.playoffData  = data.playoff;
+    // Sheets turns numeric-looking cells into numbers, so normalise keys to strings; edits are extra rows, keep the latest
+    if (Array.isArray(data.prematch)) STATE.prematchData = dedupeLatest(
+      data.prematch.map(d => ({ ...d, teamNumber: String(d.teamNumber) })),
+      d => d.submitter + '|' + d.teamNumber);
+    if (Array.isArray(data.match)) STATE.matchData = dedupeLatest(
+      data.match.map(d => ({ ...d, matchNumber: Number(d.matchNumber) })),
+      d => d.submitter + '|' + d.matchNumber);
+    if (Array.isArray(data.playoff)) STATE.playoffData = dedupeLatest(
+      data.playoff.map(d => ({ ...d, teamNumber: String(d.teamNumber) })),
+      d => d.submitter + '|' + d.teamNumber);
     saveLocal();
   }
   hideLoading();
@@ -568,6 +580,7 @@ function createCompetition() {
   STATE.matchData = [];
   STATE.playoffData = [];
   saveLocal();
+  apiPost({ type: 'activeCompetition', name });
   showToast('Competition created: ' + name, 'success');
   renderSetup();
 }
@@ -584,6 +597,7 @@ function newCompetition() {
   STATE.matchData = [];
   STATE.playoffData = [];
   saveLocal();
+  apiPost({ type: 'activeCompetition', name: '' });
   renderSetup();
 }
 
@@ -836,7 +850,8 @@ function renderPrematchMember() {
   }
 
   const teams     = myGroup.teams || [];
-  const submitted = STATE.prematchData.filter(d=>d.submitter===identity.name).map(d=>d.teamNumber);
+  // Shared with group partners: a report by anyone in the group counts for everyone in it
+  const submitted = STATE.prematchData.filter(d=>myGroup.members.includes(d.submitter)).map(d=>String(d.teamNumber));
   document.getElementById('prematch-member-subtitle').textContent =
     `${teams.length} teams to scout · with ${myGroup.members.filter(m=>m!==identity.name).join(', ')||'solo'}`;
 
@@ -867,10 +882,32 @@ function renderPrematchMember() {
 let currentFormState = {};
 let currentFormTeam  = null;
 
+// ── GROUP SHARING HELPERS ─────────────────────────────────────
+// A scouting group shares its data: whatever one member enters, their partner sees.
+function myGroupOf(groups) {
+  return (groups || []).find(g => g.members && g.members.includes(STATE.identity.name)) || null;
+}
+function groupNames(groups) {
+  const g = myGroupOf(groups);
+  return g ? g.members : [STATE.identity.name];
+}
+function tsOf(d) { const t = Date.parse(d.timestamp); return isNaN(t) ? Infinity : t; } // un-synced local entries are newest
+function findGroupPrematch(number) {
+  const names = groupNames(STATE.prematchGroups);
+  const rows = STATE.prematchData.filter(d => names.includes(d.submitter) && String(d.teamNumber) === String(number));
+  return rows.sort((a,b) => tsOf(a) - tsOf(b)).pop() || null;
+}
+// Keep only the latest row per key (the sheet is append-only, so edits show up as extra rows)
+function dedupeLatest(rows, keyFn) {
+  const map = new Map();
+  (rows || []).slice().sort((a,b) => tsOf(a) - tsOf(b)).forEach(r => map.set(keyFn(r), r));
+  return Array.from(map.values());
+}
+
 function openPrematchForm(number, name) {
   currentFormTeam  = { number, name };
   currentFormState = {};
-  const existing = STATE.prematchData.find(d=>d.submitter===STATE.identity.name&&d.teamNumber===String(number));
+  const existing = findGroupPrematch(number);
   if (existing) { try { currentFormState = JSON.parse(existing.responses); } catch(e) {} }
   openDrawer(`Scout: ${number} ${name}`, buildPrematchFormHtml());
 }
@@ -944,15 +981,18 @@ async function submitPrematchForm() {
       if (q.type === 'textarea') { const el = document.getElementById('fq-'+q.id); if (el) currentFormState[q.id] = el.value; }
     });
   });
+  // If a group partner already reported on this team, update that shared report (keeps their name as author)
+  const prior = findGroupPrematch(currentFormTeam.number);
   const entry = {
     type: 'prematch',
-    submitter:  STATE.identity.name,
+    submitter:  prior ? prior.submitter : STATE.identity.name,
     teamNumber: String(currentFormTeam.number),
     teamName:   currentFormTeam.name,
     responses:  JSON.stringify(currentFormState),
+    timestamp:  new Date().toISOString(),
   };
-  const idx = STATE.prematchData.findIndex(d=>d.submitter===STATE.identity.name&&d.teamNumber===String(currentFormTeam.number));
-  if (idx > -1) STATE.prematchData[idx] = entry; else STATE.prematchData.push(entry);
+  STATE.prematchData = STATE.prematchData.filter(d => !(d.submitter === entry.submitter && String(d.teamNumber) === entry.teamNumber));
+  STATE.prematchData.push(entry);
   saveLocal();
   closeDrawer();
   renderPrematchMember();
@@ -1125,47 +1165,107 @@ function renderMatchMember() {
   const scoutGroups = STATE.matchGroups;
   const myGroupIdx  = scoutGroups.findIndex(g=>g.groupName===myGroup.groupName);
 
+  const alliance = myAlliance(myGroup);
+  const allianceLabel = alliance === 'red' ? 'Red alliance' : alliance === 'blue' ? 'Blue alliance' : 'Red + Blue alliances';
+
   let matchItems = '';
   for (let m = 1; m <= (numMatches||20); m++) {
     const groupIdx = Math.floor((m-1)/interval) % scoutGroups.length;
     const myRole   = roles[(myGroupIdx - groupIdx + scoutGroups.length) % scoutGroups.length];
-    const submitted = STATE.matchData.find(d=>d.submitter===identity.name&&d.matchNumber===m);
+
+    if (myRole === 'Pits') {
+      // Pits: nothing to enter, just be there
+      matchItems += `
+        <div class="list-item" style="cursor:default">
+          <div class="match-badge pits">${m}</div>
+          <div class="list-item-main">
+            <div class="list-item-title">Match ${m} — Pits</div>
+            <div class="list-item-sub">Be in the pits · check in for instructions</div>
+          </div>
+        </div>`;
+      continue;
+    }
+    if (myRole === 'Break') {
+      matchItems += `
+        <div class="list-item" style="opacity:0.5;cursor:default">
+          <div class="match-badge break">${m}</div>
+          <div class="list-item-main">
+            <div class="list-item-title">Match ${m} — Break</div>
+            <div class="list-item-sub">On break</div>
+          </div>
+        </div>`;
+      continue;
+    }
+
+    const slots   = groupMatchSlots(myGroup, m);
+    const mine    = slotsForAlliance(alliance).filter(i => slotHasData(slots.teams[i]));
+    const partner = slotsForAlliance(alliance === 'red' ? 'blue' : alliance === 'blue' ? 'red' : 'none').filter(i => slotHasData(slots.teams[i]));
+    const done    = mine.length > 0;
+    const sub     = done ? 'Notes submitted ✓' : 'Tap to add notes';
+    const partnerNote = partner.length ? ` · ${escHtml(slots.author[partner[0]])} added ${alliance==='red'?'Blue':'Red'}` : '';
     matchItems += `
-      <button class="list-item" onclick="${myRole!=='Break'?`openMatchForm(${m},'${myRole}')`:''}"
-        ${myRole==='Break'?'style="opacity:0.5;pointer-events:none"':''}>
-        <div class="match-badge ${myRole==='Pits'?'pits':myRole==='Break'?'break':''}">${m}</div>
+      <button class="list-item" onclick="openMatchForm(${m},'Stands')">
+        <div class="match-badge" style="${done?'background:var(--green-light);color:var(--green)':''}">${done?'✓':m}</div>
         <div class="list-item-main">
-          <div class="list-item-title">Match ${m} — ${myRole}</div>
-          <div class="list-item-sub">${submitted?'Notes submitted ✓':myRole==='Break'?'On break':'Tap to add notes'}</div>
+          <div class="list-item-title">Match ${m} — ${allianceLabel}</div>
+          <div class="list-item-sub">${sub}${partnerNote}</div>
         </div>
-        ${myRole!=='Break'?`<svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>`:''}
+        <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
       </button>`;
   }
 
   document.getElementById('match-member-subtitle').textContent =
-    `${myGroup.groupName} · with ${myGroup.members.filter(m=>m!==identity.name).join(', ')||'solo'}`;
+    `${myGroup.groupName} · ${allianceLabel} · with ${myGroup.members.filter(m=>m!==identity.name).join(', ')||'solo'}`;
   document.getElementById('match-member-content').innerHTML = `<div class="card">${matchItems}</div>`;
 }
 
 // ── MATCH FORM ────────────────────────────────────────────────
 let currentMatchForm = { match: 0, location: '', teams: [{},{},{},{}] };
 
+// Two scouts per group: the first (roster order) scouts the Red alliance, the second the Blue alliance.
+// A solo scout does both. Slots: 0,1 = Red 1/2 · 2,3 = Blue 1/2
+function myAlliance(group) {
+  if (!group || !group.members || group.members.length < 2) return 'both';
+  return group.members.indexOf(STATE.identity.name) % 2 === 0 ? 'red' : 'blue';
+}
+function slotsForAlliance(a) {
+  return a === 'red' ? [0,1] : a === 'blue' ? [2,3] : a === 'both' ? [0,1,2,3] : [];
+}
+function slotHasData(t) { return !!(t && (String(t.team||'').trim() || String(t.notes||'').trim())); }
+
+// Merge everything the group has entered for a match (each person fills only their own alliance)
+function groupMatchSlots(group, matchNum) {
+  const names = group ? group.members : [STATE.identity.name];
+  const rows = STATE.matchData
+    .filter(d => names.includes(d.submitter) && Number(d.matchNumber) === Number(matchNum))
+    .sort((a,b) => tsOf(a) - tsOf(b));
+  const teams = [{},{},{},{}], author = [null,null,null,null];
+  rows.forEach(d => {
+    const arr = tryParse(d.teams, []);
+    if (!Array.isArray(arr)) return;
+    arr.slice(0,4).forEach((t,i) => { if (slotHasData(t)) { teams[i] = { team: t.team||'', notes: t.notes||'' }; author[i] = d.submitter; } });
+  });
+  return { teams, author };
+}
+
 function openMatchForm(matchNum, location) {
-  const existing = STATE.matchData.find(d=>d.submitter===STATE.identity.name&&d.matchNumber===matchNum);
-  currentMatchForm = {
-    match: matchNum, location,
-    teams: existing ? tryParse(existing.teams,[{},{},{},{}]) : [{},{},{},{}]
-  };
-  openDrawer(`Match ${matchNum} — ${location}`, buildMatchFormHtml());
+  const group    = myGroupOf(STATE.matchGroups);
+  const alliance = myAlliance(group);
+  const merged   = groupMatchSlots(group, matchNum);
+  currentMatchForm = { match: matchNum, location, alliance, teams: merged.teams, author: merged.author };
+  const title = alliance === 'red' ? 'Red alliance' : alliance === 'blue' ? 'Blue alliance' : 'Match';
+  openDrawer(`Match ${matchNum} — ${title}`, buildMatchFormHtml());
 }
 
 function buildMatchFormHtml() {
   const labels = ['Red 1','Red 2','Blue 1','Blue 2'];
-  return labels.map((label, i) => {
+  const mine = slotsForAlliance(currentMatchForm.alliance);
+  const block = (i) => {
     const t = currentMatchForm.teams[i] || {};
-    return `
+    if (mine.includes(i)) {
+      return `
       <div style="margin-bottom:20px">
-        <div class="scout-section-header ${i<2?'orange':'teal'}">${label}</div>
+        <div class="scout-section-header ${i<2?'orange':'teal'}">${labels[i]}</div>
         <div style="margin-top:12px">
           <div class="form-group">
             <label class="form-label">Team Number / Name</label>
@@ -1180,19 +1280,34 @@ function buildMatchFormHtml() {
           </div>
         </div>
       </div>`;
-  }).join('') + `<button class="btn btn-primary btn-full" onclick="submitMatchForm()">Submit Match Notes</button>`;
+    }
+    // Partner's alliance: read-only
+    const who = currentMatchForm.author[i];
+    return `
+      <div style="margin-bottom:20px;opacity:0.9">
+        <div class="scout-section-header ${i<2?'orange':'teal'}">${labels[i]} <span style="font-weight:400;font-size:12px">· ${who?'entered by '+escHtml(who):'your partner is scouting this'}</span></div>
+        <div style="margin-top:10px;font-size:14px;line-height:1.5;color:var(--text-2)">
+          ${slotHasData(t) ? `<strong>${escHtml(t.team||'—')}</strong><br>${escHtml(t.notes||'')}` : 'Nothing entered yet'}
+        </div>
+      </div>`;
+  };
+  return [0,1,2,3].map(block).join('') + `<button class="btn btn-primary btn-full" onclick="submitMatchForm()">Submit Match Notes</button>`;
 }
 
 async function submitMatchForm() {
+  // Only send my own alliance's slots so I never overwrite my partner's entries
+  const mine  = slotsForAlliance(currentMatchForm.alliance);
+  const slots = [0,1,2,3].map(i => mine.includes(i) ? { team: currentMatchForm.teams[i].team||'', notes: currentMatchForm.teams[i].notes||'' } : {});
   const entry = {
     type: 'match',
     submitter:   STATE.identity.name,
     matchNumber: currentMatchForm.match,
     location:    currentMatchForm.location,
-    teams:       JSON.stringify(currentMatchForm.teams),
+    teams:       JSON.stringify(slots),
+    timestamp:   new Date().toISOString(),
   };
-  const idx = STATE.matchData.findIndex(d=>d.submitter===STATE.identity.name&&d.matchNumber===currentMatchForm.match);
-  if (idx > -1) STATE.matchData[idx] = entry; else STATE.matchData.push(entry);
+  STATE.matchData = STATE.matchData.filter(d => !(d.submitter === entry.submitter && Number(d.matchNumber) === Number(entry.matchNumber)));
+  STATE.matchData.push(entry);
   saveLocal();
   closeDrawer();
   renderMatchMember();
@@ -1383,21 +1498,27 @@ function renderPlayoffsMember() {
   }
 
   const targets    = myGroup.targets || [];
-  const myContacts = STATE.playoffData.filter(d=>d.submitter===identity.name);
-
+  // Shared with group partners
   const targetHtml = targets.map(t => {
-    const contact = myContacts.find(c=>c.teamNumber===String(t.number));
-    const status  = contact ? contact.status : 'pending';
+    const contact = findGroupPlayoff(t.number);
+    const status  = contact && contact.status ? contact.status : 'pending';
+    const notes   = contact && contact.notes ? contact.notes : '';
+    const iconHtml = status==='good' ? icons.check : status==='bad' ? icons.x : status==='none' ? icons.warn : icons.clock;
+    const label    = status==='good' ? 'Went well!' : status==='bad' ? "Didn't go well" : status==='none' ? 'Could not contact' : 'Not contacted yet';
+    const attrs = `data-num="${escHtml(t.number)}" data-name="${escHtml(t.name)}"`;
     return `
       <div class="status-row">
-        <div class="status-icon ${status}">${status==='good'?icons.check:status==='bad'?icons.x:icons.clock}</div>
+        <div class="status-icon ${status}">${iconHtml}</div>
         <div class="list-item-main">
           <div class="list-item-title">${escHtml(t.number)} ${escHtml(t.name)}</div>
-          <div class="list-item-sub">${status==='good'?'Went well!':status==='bad'?"Didn't go well":'Not contacted yet'}</div>
-          <div class="status-btn-row">
-            <button class="status-btn ${status==='good'?'good':''}" data-num="${escHtml(t.number)}" data-name="${escHtml(t.name)}" onclick="setPlayoffStatus(this.dataset.num,this.dataset.name,'good')">✓ Went Well</button>
-            <button class="status-btn ${status==='bad'?'bad':''}"  data-num="${escHtml(t.number)}" data-name="${escHtml(t.name)}" onclick="setPlayoffStatus(this.dataset.num,this.dataset.name,'bad')">✗ Didn't Go Well</button>
+          <div class="list-item-sub">${label}${contact && contact.submitter && contact.submitter!==identity.name ? ' · by '+escHtml(contact.submitter) : ''}</div>
+          <div class="status-btn-row" style="flex-wrap:wrap">
+            <button class="status-btn ${status==='good'?'good':''}" ${attrs} onclick="setPlayoffStatus(this.dataset.num,this.dataset.name,'good')">✓ Went Well</button>
+            <button class="status-btn ${status==='bad'?'bad':''}"  ${attrs} onclick="setPlayoffStatus(this.dataset.num,this.dataset.name,'bad')">✗ Didn't Go Well</button>
+            <button class="status-btn ${status==='none'?'none':''}" ${attrs} onclick="setPlayoffStatus(this.dataset.num,this.dataset.name,'none')">Could Not Contact</button>
           </div>
+          <textarea class="form-input" rows="2" style="margin-top:8px" placeholder="Notes (optional)" ${attrs}
+            onchange="setPlayoffNotes(this.dataset.num,this.dataset.name,this.value)">${escHtml(notes)}</textarea>
         </div>
       </div>`;
   }).join('');
@@ -1421,17 +1542,46 @@ function renderPlayoffsMember() {
     </div>`;
 }
 
-async function setPlayoffStatus(number, name, status) {
-  const entry = { type: 'playoff', submitter: STATE.identity.name, teamNumber: String(number), status, notes: '' };
-  const idx = STATE.playoffData.findIndex(d=>d.submitter===STATE.identity.name&&d.teamNumber===String(number));
-  if (idx > -1) STATE.playoffData[idx] = entry; else STATE.playoffData.push(entry);
+function findGroupPlayoff(number) {
+  const names = groupNames(STATE.playoffGroups);
+  const rows = STATE.playoffData.filter(d => names.includes(d.submitter) && String(d.teamNumber) === String(number));
+  return rows.sort((a,b) => tsOf(a) - tsOf(b)).pop() || null;
+}
+
+// Saves status and/or notes for a target team; shared with group partners
+async function savePlayoffContact(number, changes) {
+  const prior = findGroupPlayoff(number);
+  const entry = {
+    type: 'playoff',
+    submitter: prior ? prior.submitter : STATE.identity.name,
+    teamNumber: String(number),
+    status: prior && prior.status ? prior.status : 'pending',
+    notes:  prior && prior.notes  ? prior.notes  : '',
+    timestamp: new Date().toISOString(),
+    ...changes,
+  };
+  STATE.playoffData = STATE.playoffData.filter(d => !(d.submitter === entry.submitter && String(d.teamNumber) === entry.teamNumber));
+  STATE.playoffData.push(entry);
   saveLocal();
   renderPlayoffsMember();
   await apiPost(entry);
 }
 
+function setPlayoffStatus(number, name, status) { return savePlayoffContact(number, { status }); }
+function setPlayoffNotes(number, name, notes)   { return savePlayoffContact(number, { notes }); }
+
 // ── RESULTS ──────────────────────────────────────────────────
 function renderResults() {
+  try {
+    renderResultsInner();
+  } catch (e) {
+    console.error(e);
+    document.getElementById('results-content').innerHTML = `
+      <div class="alert alert-orange">${icons.warn} Couldn't build the results: ${escHtml(e.message)}</div>`;
+  }
+}
+
+function renderResultsInner() {
   const teams = STATE.setup.teams;
   if (!teams.length) {
     document.getElementById('results-content').innerHTML = `
@@ -1453,8 +1603,9 @@ function renderResults() {
   });
 
   STATE.matchData.forEach(d => {
-    tryParse(d.teams, []).forEach(t => {
-      if (!t.team) return;
+    const arr = tryParse(d.teams, []);
+    (Array.isArray(arr) ? arr : []).forEach(t => {
+      if (!t || !t.team) return;
       const result = fuzzyMatchTeam(t.team, teams);
       if (result && result.team) {
         const key = result.team.number;
@@ -1485,7 +1636,7 @@ function renderResults() {
           ${prematch.length ? `
             <div style="padding:12px 18px 0"><div class="section-label">Pre-Match Reports (${prematch.length})</div></div>
             ${prematch.map(r=>`
-              <div class="list-item" onclick="openResultDetail(${JSON.stringify(escHtml(JSON.stringify(r)))})">
+              <div class="list-item" data-report="${escHtml(JSON.stringify(r))}" onclick="openResultDetail(this.dataset.report)">
                 <div class="list-item-main">
                   <div class="list-item-title">by ${escHtml(r.submitter)}</div>
                   <div class="list-item-sub">${r.matchConfidence==='fuzzy'?'⚠ Fuzzy match':'Exact match'}</div>
