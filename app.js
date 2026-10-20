@@ -538,13 +538,14 @@ function renderSetup() {
           <div class="card-subtitle">${roster.length} members</div>
         </div>
       </div>
-      <div id="roster-list">${renderRosterList()}</div>
-      <div class="card-body" style="padding-top:8px">
-        <div class="flex gap-8">
-          <input class="form-input" id="new-member-name" placeholder="Member name" style="flex:1">
-          <input class="form-input" id="new-member-group" placeholder="Group (optional)" style="flex:1">
+      <div class="card-body">
+        <div class="alert alert-teal">
+          ${icons.info} One name per line, e.g.<br><code>Alice<br>Bob<br>Charlie</code>
         </div>
-        <button class="btn btn-primary btn-full mt-12" onclick="addMember()">Add Member</button>
+        <div class="form-group">
+          <textarea class="form-input" id="s-roster" rows="8" placeholder="Alice&#10;Bob&#10;Charlie&#10;...">${roster.map(m=>m.name).join('\n')}</textarea>
+        </div>
+        <button class="btn btn-primary btn-full" onclick="saveRoster()">Save Roster</button>
       </div>
     </div>
     ` : ''}
@@ -583,18 +584,13 @@ function newCompetition() {
   renderSetup();
 }
 
-function renderRosterList() {
-  if (!STATE.roster.length) return `<div class="empty-state" style="padding:24px"><p>No members yet</p></div>`;
-  return STATE.roster.map((m, i) => `
-    <div class="list-item">
-      <div class="identity-avatar" style="width:36px;height:36px;font-size:13px">${initials(m.name)}</div>
-      <div class="list-item-main">
-        <div class="list-item-title">${escHtml(m.name)}</div>
-        <div class="list-item-sub">${escHtml(m.group||'No group')}</div>
-      </div>
-      <button class="btn btn-sm btn-danger" onclick="removeMember(${i})">Remove</button>
-    </div>
-  `).join('');
+function saveRoster() {
+  const raw = document.getElementById('s-roster').value.trim();
+  STATE.roster = raw.split('\n').map(l=>l.trim()).filter(Boolean).map(name=>({ name }));
+  saveLocal();
+  apiPost({ type: 'roster', members: STATE.roster });
+  showToast(`${STATE.roster.length} members saved`, 'success');
+  renderSetup();
 }
 
 function saveEventInfo() {
@@ -620,25 +616,6 @@ function saveTeams() {
   renderSetup();
 }
 
-function addMember() {
-  const name  = document.getElementById('new-member-name').value.trim();
-  const group = document.getElementById('new-member-group').value.trim();
-  if (!name) return;
-  STATE.roster.push({ name, group });
-  saveLocal();
-  apiPost({ type: 'roster', members: STATE.roster });
-  document.getElementById('new-member-name').value = '';
-  document.getElementById('new-member-group').value = '';
-  document.getElementById('roster-list').innerHTML = renderRosterList();
-  showToast(name + ' added', 'success');
-}
-
-function removeMember(i) {
-  STATE.roster.splice(i, 1);
-  saveLocal();
-  apiPost({ type: 'roster', members: STATE.roster });
-  document.getElementById('roster-list').innerHTML = renderRosterList();
-}
 
 // ── PRE-MATCH ─────────────────────────────────────────────────
 function renderPrematch() {
