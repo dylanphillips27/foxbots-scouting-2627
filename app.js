@@ -70,9 +70,13 @@ let STATE = {
     teams: [],
   },
   roster: [],
-  prematchGroups: [],
+  driveTeam: [],        // shared across all sections
+  prematchGroups: [],   // scout groups only (no Drive Team entry)
+  prematchPits: [],     // pit crew for pre-match section
   matchGroups: [],
+  matchPits: [],        // pit crew for match section
   playoffGroups: [],
+  playoffPits: [],      // pit crew for playoff section
   prematchData: [],
   matchData: [],
   playoffData: [],
@@ -91,9 +95,13 @@ function saveLocal() {
     competition: STATE.competition,
     setup: STATE.setup,
     roster: STATE.roster,
+    driveTeam: STATE.driveTeam,
     prematchGroups: STATE.prematchGroups,
+    prematchPits: STATE.prematchPits,
     matchGroups: STATE.matchGroups,
+    matchPits: STATE.matchPits,
     playoffGroups: STATE.playoffGroups,
+    playoffPits: STATE.playoffPits,
     prematchData: STATE.prematchData,
     matchData: STATE.matchData,
     playoffData: STATE.playoffData,
@@ -328,15 +336,26 @@ async function loadAllData() {
     }
     if (data.roster      && Array.isArray(data.roster))      STATE.roster      = data.roster;
     if (data.assignments && Array.isArray(data.assignments)) {
+      const driveRow = data.assignments.find(a=>a.phase==='driveteam');
+      if (driveRow) STATE.driveTeam = tryParse(driveRow.members, []);
+
       STATE.prematchGroups = data.assignments.filter(a=>a.phase==='prematch').map(a=>({
         groupName: a.group, members: tryParse(a.members,[]), teams: tryParse(a.targets,[]),
       }));
+      const pmPitsRow = data.assignments.find(a=>a.phase==='prematch_pits');
+      if (pmPitsRow) STATE.prematchPits = tryParse(pmPitsRow.members, []);
+
       STATE.matchGroups = data.assignments.filter(a=>a.phase==='match').map(a=>({
         groupName: a.group, members: tryParse(a.members,[]),
       }));
+      const mPitsRow = data.assignments.find(a=>a.phase==='match_pits');
+      if (mPitsRow) STATE.matchPits = tryParse(mPitsRow.members, []);
+
       STATE.playoffGroups = data.assignments.filter(a=>a.phase==='playoff').map(a=>({
         groupName: a.group, members: tryParse(a.members,[]), targets: tryParse(a.targets,[]), notes: a.notes||'',
       }));
+      const plPitsRow = data.assignments.find(a=>a.phase==='playoff_pits');
+      if (plPitsRow) STATE.playoffPits = tryParse(plPitsRow.members, []);
     }
     if (data.prematch) STATE.prematchData = data.prematch;
     if (data.match)    STATE.matchData    = data.match;
@@ -537,9 +556,10 @@ function createCompetition() {
   if (!name) { showToast('Enter a competition name', ''); return; }
   STATE.competition = name;
   STATE.setup = { eventName: name, numMatches: 0, rotationInterval: 3, teams: [] };
-  STATE.prematchGroups = [];
-  STATE.matchGroups = [];
-  STATE.playoffGroups = [];
+  STATE.driveTeam = [];
+  STATE.prematchGroups = []; STATE.prematchPits = [];
+  STATE.matchGroups   = []; STATE.matchPits    = [];
+  STATE.playoffGroups = []; STATE.playoffPits  = [];
   STATE.prematchData = [];
   STATE.matchData = [];
   STATE.playoffData = [];
@@ -552,9 +572,10 @@ function newCompetition() {
   if (!confirm('Start a new competition? Current assignments will clear. Old data stays saved in the sheet.')) return;
   STATE.competition = '';
   STATE.setup = { eventName: '', numMatches: 0, rotationInterval: 3, teams: [] };
-  STATE.prematchGroups = [];
-  STATE.matchGroups = [];
-  STATE.playoffGroups = [];
+  STATE.driveTeam = [];
+  STATE.prematchGroups = []; STATE.prematchPits = [];
+  STATE.matchGroups   = []; STATE.matchPits    = [];
+  STATE.playoffGroups = []; STATE.playoffPits  = [];
   STATE.prematchData = [];
   STATE.matchData = [];
   STATE.playoffData = [];
@@ -636,8 +657,15 @@ function renderPrematchCaptain() {
   const groups  = STATE.prematchGroups;
   const teams   = STATE.setup.teams;
   const members = STATE.roster.filter(m => m.name);
+  const memberNames = members.map(m => m.name);
 
-  let html = `<div class="alert alert-teal">${icons.info} Assign scouting groups and the teams they need to scout pre-match.</div>`;
+  // Compute who is assigned in this section (pits + scout groups), to grey out in other pickers
+  const assignedInSection = getAssignedInSection(groups, STATE.prematchPits);
+
+  // Drive team is shared — show it greyed out but not editable here (edit in any section)
+  const driveGreyed = STATE.driveTeam.filter(n => !assignedInSection.includes(n));
+
+  let html = `<div class="alert alert-teal">${icons.info} Changes auto-save. Drive Team is shared across all sections.</div>`;
 
   html += `
     <div class="card">
@@ -647,34 +675,38 @@ function renderPrematchCaptain() {
       </div>
       <div class="card-body">
         <div class="form-group">
-          <label class="form-label">Reserved for Drive Team</label>
-          <div class="pill-select" id="pm-drive-team">${renderPillSelect(members.map(m=>m.name),(STATE.prematchGroups.find(g=>g.groupName==='Drive Team')?.members)||[])}</div>
+          <label class="form-label">Drive Team <span style="font-size:11px;color:var(--text-3)">(shared across all sections)</span></label>
+          <div class="pill-select" id="pm-drive-team">${renderPillSelect(memberNames, STATE.driveTeam, assignedInSection.filter(n=>!STATE.driveTeam.includes(n)), 'onPrematchDriveToggle(this)')}</div>
         </div>
         <div class="form-group mb-8">
-          <label class="form-label">Reserved for Pits</label>
-          <div class="pill-select" id="pm-pits">${renderPillSelect(members.map(m=>m.name),(STATE.prematchGroups.find(g=>g.groupName==='Pits')?.members)||[])}</div>
+          <label class="form-label">Pits <span style="font-size:11px;color:var(--text-3)">(pre-match only)</span></label>
+          <div class="pill-select" id="pm-pits">${renderPillSelect(memberNames, STATE.prematchPits, [...STATE.driveTeam, ...assignedInSection.filter(n=>!STATE.prematchPits.includes(n))], 'onPrematchPitsToggle(this)')}</div>
         </div>
       </div>
     </div>`;
 
-  const scoutGroups = groups.filter(g => g.groupName !== 'Drive Team' && g.groupName !== 'Pits');
-  scoutGroups.forEach((group, gi) => { html += renderPrematchGroupCard(group, gi, members, teams); });
+  groups.forEach((group, gi) => { html += renderPrematchGroupCard(group, gi, memberNames, teams); });
 
   html += `
-    <button class="btn btn-secondary btn-full mt-8" onclick="addPrematchGroup()">+ Add Scouting Group</button>
-    <button class="btn btn-primary btn-full mt-8" onclick="savePrematchAssignments()">Save All Assignments</button>`;
+    <button class="btn btn-secondary btn-full mt-8" onclick="addPrematchGroup()">+ Add Scouting Group</button>`;
 
   document.getElementById('prematch-captain-content').innerHTML = html;
 }
 
-function renderPrematchGroupCard(group, gi, members, teams) {
+function renderPrematchGroupCard(group, gi, memberNames, teams) {
+  // Grey out: drive team + anyone in pits + anyone in OTHER scout groups
+  const otherGroupMembers = STATE.prematchGroups
+    .filter((_, i) => i !== gi)
+    .flatMap(g => g.members);
+  const greyedMembers = [...new Set([...STATE.driveTeam, ...STATE.prematchPits, ...otherGroupMembers])];
+
   return `
     <div class="card" id="pmg-${gi}">
       <div class="card-header">
         <div class="card-header-icon">${icons.group}</div>
         <div style="flex:1">
           <input class="form-input" value="${escHtml(group.groupName)}"
-            oninput="STATE.prematchGroups.filter(g=>g.groupName!=='Drive Team'&&g.groupName!=='Pits')[${gi}]&&(STATE.prematchGroups.filter(g=>g.groupName!=='Drive Team'&&g.groupName!=='Pits')[${gi}].groupName=this.value)"
+            oninput="STATE.prematchGroups[${gi}].groupName=this.value"
             style="border:none;padding:0;background:transparent;font-size:15px;font-weight:700;width:100%" placeholder="Group name">
         </div>
         <button class="btn btn-sm btn-danger" onclick="removePrematchGroup(${gi})">Remove</button>
@@ -682,83 +714,135 @@ function renderPrematchGroupCard(group, gi, members, teams) {
       <div class="card-body">
         <div class="form-group">
           <label class="form-label">Members</label>
-          <div class="pill-select" id="pmg-members-${gi}">${renderPillSelect(members.map(m=>m.name),group.members||[])}</div>
+          <div class="pill-select" id="pmg-members-${gi}">${renderPillSelect(memberNames, group.members||[], greyedMembers, 'onPrematchGroupMemberToggle(this,'+gi+')')}</div>
         </div>
         <div class="form-group mb-8">
           <label class="form-label">Teams to Scout</label>
-          <div class="pill-select" id="pmg-teams-${gi}">${renderPillSelect(teams.map(t=>t.number+' '+t.name),(group.teams||[]).map(t=>t.number+' '+t.name))}</div>
+          <div class="pill-select" id="pmg-teams-${gi}">${renderPillSelect(teams.map(t=>t.number+' '+t.name),(group.teams||[]).map(t=>t.number+' '+t.name),[])}</div>
         </div>
       </div>
     </div>`;
 }
 
-function renderPillSelect(options, selected, onclickFn = null) {
+// Render pills; greyedOut = array of values to show as disabled (already assigned elsewhere)
+function renderPillSelect(options, selected, greyedOut = [], autoSaveFn = null) {
   return options.map(opt => {
-    const sel = selected.includes(opt) || selected.some(s => String(s) === String(opt));
-    const fn  = onclickFn ? `onclick="${onclickFn}"` : `onclick="this.classList.toggle('selected')"`;
-    return `<button class="pill-option ${sel?'selected':''}" data-val="${escHtml(opt)}" ${fn}>${escHtml(opt)}</button>`;
+    const sel      = selected.includes(opt) || selected.some(s => String(s) === String(opt));
+    const greyed   = !sel && greyedOut.includes(opt);
+    const fn       = greyed ? '' : (autoSaveFn ? `onclick="${autoSaveFn}"` : `onclick="pillToggle(this)"`) ;
+    const disabled = greyed ? 'disabled' : '';
+    return `<button class="pill-option ${sel?'selected':''} ${greyed?'disabled':''}" data-val="${escHtml(opt)}" ${fn} ${disabled}>${escHtml(opt)}</button>`;
   }).join('');
+}
+
+function pillToggle(el) {
+  el.classList.toggle('selected');
 }
 
 function getPillSelected(containerId) {
   return Array.from(document.querySelectorAll(`#${containerId} .pill-option.selected`)).map(b=>b.dataset.val);
 }
 
+// Returns all members already assigned in any group/pits for a section (excluding Drive Team which is global)
+function getAssignedInSection(sectionGroups, sectionPits) {
+  const assigned = new Set(sectionPits);
+  sectionGroups.forEach(g => g.members.forEach(m => assigned.add(m)));
+  return Array.from(assigned);
+}
+
+// Auto-save helpers — called on every pill click in captain views
+function autoSavePrematch() { savePrematchAssignments(true); }
+function autoSaveMatch()    { saveMatchAssignments(true); }
+function autoSavePlayoff()  { savePlayoffAssignments(true); }
+
+// ── PREMATCH AUTO-SAVE HANDLERS ───────────────────────────────
+function onPrematchDriveToggle(el) {
+  pillToggle(el);
+  // Sync drive team across all sections immediately
+  STATE.driveTeam = getPillSelected('pm-drive-team');
+  savePrematchAssignments(true);
+  // Re-render other sections' drive team pills if they're visible (will sync on next render)
+}
+
+function onPrematchPitsToggle(el) {
+  pillToggle(el);
+  STATE.prematchPits = getPillSelected('pm-pits');
+  savePrematchAssignments(true);
+  renderPrematchCaptain(); // refresh grey-out state
+}
+
+function onPrematchGroupMemberToggle(el, gi) {
+  pillToggle(el);
+  STATE.prematchGroups[gi].members = getPillSelected('pmg-members-' + gi);
+  savePrematchAssignments(true);
+  renderPrematchCaptain(); // refresh grey-out state for other groups
+}
+
 function addPrematchGroup() {
-  const n = STATE.prematchGroups.filter(g=>g.groupName!=='Drive Team'&&g.groupName!=='Pits').length;
-  STATE.prematchGroups.push({ groupName: 'Group ' + (n+1), members: [], teams: [] });
+  STATE.prematchGroups.push({ groupName: 'Group ' + (STATE.prematchGroups.length + 1), members: [], teams: [] });
   renderPrematchCaptain();
 }
 
 function removePrematchGroup(gi) {
-  const scoutGroups = STATE.prematchGroups.filter(g=>g.groupName!=='Drive Team'&&g.groupName!=='Pits');
-  const real = STATE.prematchGroups.indexOf(scoutGroups[gi]);
-  if (real > -1) STATE.prematchGroups.splice(real, 1);
+  STATE.prematchGroups.splice(gi, 1);
+  savePrematchAssignments(true);
   renderPrematchCaptain();
 }
 
-function savePrematchAssignments() {
+function savePrematchAssignments(silent = false) {
   const teams = STATE.setup.teams;
-  const dtMembers   = getPillSelected('pm-drive-team');
-  const pitsMembers = getPillSelected('pm-pits');
-  let newGroups = [];
-  if (dtMembers.length)   newGroups.push({ groupName: 'Drive Team', members: dtMembers,   teams: [] });
-  if (pitsMembers.length) newGroups.push({ groupName: 'Pits',       members: pitsMembers, teams: [] });
-  STATE.prematchGroups.filter(g=>g.groupName!=='Drive Team'&&g.groupName!=='Pits').forEach((group, gi) => {
-    const mems      = getPillSelected('pmg-members-' + gi);
-    const teamVals  = getPillSelected('pmg-teams-' + gi);
-    const selTeams  = teamVals.map(v => { const num = v.split(' ')[0]; return teams.find(t=>t.number===num)||{number:num,name:v}; });
-    newGroups.push({ groupName: group.groupName, members: mems, teams: selTeams });
+  // Collect current drive team and pits from DOM if pills exist
+  const dtEl   = document.getElementById('pm-drive-team');
+  const pitsEl = document.getElementById('pm-pits');
+  if (dtEl)   STATE.driveTeam    = getPillSelected('pm-drive-team');
+  if (pitsEl) STATE.prematchPits = getPillSelected('pm-pits');
+
+  // Collect scout group members + teams from DOM
+  STATE.prematchGroups.forEach((group, gi) => {
+    const memsEl  = document.getElementById('pmg-members-' + gi);
+    const teamsEl = document.getElementById('pmg-teams-' + gi);
+    if (memsEl)  group.members = getPillSelected('pmg-members-' + gi);
+    if (teamsEl) {
+      const teamVals = getPillSelected('pmg-teams-' + gi);
+      group.teams = teamVals.map(v => { const num = v.split(' ')[0]; return teams.find(t=>t.number===num)||{number:num,name:v}; });
+    }
   });
-  STATE.prematchGroups = newGroups;
   saveLocal();
   apiPost({ type: 'assignments', assignments: buildAssignments() });
-  showToast('Pre-match assignments saved', 'success');
+  if (!silent) showToast('Pre-match assignments saved', 'success');
 }
 
 function buildAssignments() {
   return [
+    { phase:'driveteam',    group:'Drive Team', members:STATE.driveTeam,    targets:[], notes:'' },
+    { phase:'prematch_pits',group:'Pits',       members:STATE.prematchPits, targets:[], notes:'' },
     ...STATE.prematchGroups.map(g=>({phase:'prematch',group:g.groupName,members:g.members,targets:g.teams,notes:''})),
+    { phase:'match_pits',   group:'Pits',       members:STATE.matchPits,    targets:[], notes:'' },
     ...STATE.matchGroups.map(g=>({phase:'match',group:g.groupName,members:g.members,targets:[],notes:''})),
+    { phase:'playoff_pits', group:'Pits',       members:STATE.playoffPits,  targets:[], notes:'' },
     ...STATE.playoffGroups.map(g=>({phase:'playoff',group:g.groupName,members:g.members,targets:g.targets,notes:g.notes})),
   ];
 }
 
 function renderPrematchMember() {
   const identity = STATE.identity;
-  const myGroup  = STATE.prematchGroups.find(g => g.members && g.members.includes(identity.name));
+
+  // Check shared drive team first
+  if (STATE.driveTeam && STATE.driveTeam.includes(identity.name)) {
+    document.getElementById('prematch-member-content').innerHTML = `<div class="alert alert-teal">${icons.info} You're on the Drive Team — no pre-match scouting needed.</div>`;
+    return;
+  }
+  // Check pre-match pits
+  if (STATE.prematchPits && STATE.prematchPits.includes(identity.name)) {
+    document.getElementById('prematch-member-content').innerHTML = `<div class="alert alert-orange">${icons.info} You're assigned to the Pits — no pre-match scouting needed.</div>`;
+    return;
+  }
+
+  const myGroup = STATE.prematchGroups.find(g => g.members && g.members.includes(identity.name));
 
   if (!myGroup) {
     document.getElementById('prematch-member-content').innerHTML = `
       <div class="empty-state">${icons.empty}<h3>No assignment yet</h3><p>Your captain hasn't set up pre-match assignments yet. Check back soon.</p></div>`;
-    return;
-  }
-  if (myGroup.groupName === 'Drive Team') {
-    document.getElementById('prematch-member-content').innerHTML = `<div class="alert alert-teal">${icons.info} You're on the Drive Team — no pre-match scouting needed.</div>`;
-    return;
-  }
-  if (myGroup.groupName === 'Pits') {
-    document.getElementById('prematch-member-content').innerHTML = `<div class="alert alert-orange">${icons.info} You're assigned to the Pits — no pre-match scouting needed.</div>`;
     return;
   }
 
@@ -901,51 +985,54 @@ function renderMatch() {
 }
 
 function renderMatchCaptain() {
-  const members    = STATE.roster.filter(m=>m.name);
-  const numMatches = STATE.setup.numMatches;
-  const interval   = STATE.setup.rotationInterval;
+  const memberNames = STATE.roster.filter(m=>m.name).map(m=>m.name);
+  const numMatches  = STATE.setup.numMatches;
+  const interval    = STATE.setup.rotationInterval;
+  const scoutGroups = STATE.matchGroups;
+
+  const assignedInSection = getAssignedInSection(scoutGroups, STATE.matchPits);
 
   let html = `
-    <div class="alert alert-teal">${icons.info} Groups rotate: Stands → Pits → Break. Set match count in Setup.</div>
+    <div class="alert alert-teal">${icons.info} Changes auto-save. Drive Team is shared across all sections.</div>
     <div class="card">
       <div class="card-header"><div class="card-header-icon">${icons.people}</div>
         <div><div class="card-title">Reserved</div></div>
       </div>
       <div class="card-body">
         <div class="form-group">
-          <label class="form-label">Drive Team</label>
-          <div class="pill-select" id="ms-drive">${renderPillSelect(members.map(m=>m.name),(STATE.matchGroups.find(g=>g.groupName==='Drive Team')?.members)||[])}</div>
+          <label class="form-label">Drive Team <span style="font-size:11px;color:var(--text-3)">(shared across all sections)</span></label>
+          <div class="pill-select" id="ms-drive">${renderPillSelect(memberNames, STATE.driveTeam, assignedInSection.filter(n=>!STATE.driveTeam.includes(n)), 'onMatchDriveToggle(this)')}</div>
         </div>
         <div class="form-group mb-8">
-          <label class="form-label">Pits (fixed)</label>
-          <div class="pill-select" id="ms-pits">${renderPillSelect(members.map(m=>m.name),(STATE.matchGroups.find(g=>g.groupName==='Pits')?.members)||[])}</div>
+          <label class="form-label">Pits <span style="font-size:11px;color:var(--text-3)">(match section only)</span></label>
+          <div class="pill-select" id="ms-pits">${renderPillSelect(memberNames, STATE.matchPits, [...STATE.driveTeam, ...assignedInSection.filter(n=>!STATE.matchPits.includes(n))], 'onMatchPitsToggle(this)')}</div>
         </div>
       </div>
     </div>`;
 
-  const scoutGroups = STATE.matchGroups.filter(g=>g.groupName!=='Drive Team'&&g.groupName!=='Pits');
   scoutGroups.forEach((group, gi) => {
+    const otherGroupMembers = scoutGroups.filter((_,i)=>i!==gi).flatMap(g=>g.members);
+    const greyedMembers = [...new Set([...STATE.driveTeam, ...STATE.matchPits, ...otherGroupMembers])];
     html += `
       <div class="card">
         <div class="card-header">
           <div style="flex:1">
             <input class="form-input" value="${escHtml(group.groupName)}" id="mg-name-${gi}"
+              oninput="STATE.matchGroups[${gi}].groupName=this.value"
               style="border:none;padding:0;background:transparent;font-size:15px;font-weight:700;width:100%" placeholder="Group name">
           </div>
           <button class="btn btn-sm btn-danger" onclick="removeMatchGroup(${gi})">Remove</button>
         </div>
         <div class="card-body">
           <label class="form-label">Members</label>
-          <div class="pill-select" id="mg-members-${gi}">${renderPillSelect(members.map(m=>m.name),group.members||[])}</div>
+          <div class="pill-select" id="mg-members-${gi}">${renderPillSelect(memberNames, group.members||[], greyedMembers, 'onMatchGroupMemberToggle(this,'+gi+')')}</div>
         </div>
       </div>`;
   });
 
   if (scoutGroups.length >= 2 && numMatches > 0) html += renderRotationPreview(scoutGroups, numMatches, interval);
 
-  html += `
-    <button class="btn btn-secondary btn-full mt-8" onclick="addMatchGroup()">+ Add Scouting Group</button>
-    <button class="btn btn-primary btn-full mt-8" onclick="saveMatchAssignments()">Save Match Assignments</button>`;
+  html += `<button class="btn btn-secondary btn-full mt-8" onclick="addMatchGroup()">+ Add Scouting Group</button>`;
 
   document.getElementById('match-captain-content').innerHTML = html;
 }
@@ -973,35 +1060,52 @@ function renderRotationPreview(scoutGroups, numMatches, interval) {
     </div>${rows}${more}</div>`;
 }
 
+// ── MATCH AUTO-SAVE HANDLERS ──────────────────────────────────
+function onMatchDriveToggle(el) {
+  pillToggle(el);
+  STATE.driveTeam = getPillSelected('ms-drive');
+  saveMatchAssignments(true);
+}
+
+function onMatchPitsToggle(el) {
+  pillToggle(el);
+  STATE.matchPits = getPillSelected('ms-pits');
+  saveMatchAssignments(true);
+  renderMatchCaptain();
+}
+
+function onMatchGroupMemberToggle(el, gi) {
+  pillToggle(el);
+  STATE.matchGroups[gi].members = getPillSelected('mg-members-' + gi);
+  saveMatchAssignments(true);
+  renderMatchCaptain();
+}
+
 function addMatchGroup() {
-  const n = STATE.matchGroups.filter(g=>g.groupName!=='Drive Team'&&g.groupName!=='Pits').length;
-  STATE.matchGroups.push({ groupName: 'Group ' + (n+1), members: [] });
+  STATE.matchGroups.push({ groupName: 'Group ' + (STATE.matchGroups.length + 1), members: [] });
   renderMatchCaptain();
 }
 
 function removeMatchGroup(gi) {
-  const scoutGroups = STATE.matchGroups.filter(g=>g.groupName!=='Drive Team'&&g.groupName!=='Pits');
-  const real = STATE.matchGroups.indexOf(scoutGroups[gi]);
-  if (real > -1) STATE.matchGroups.splice(real, 1);
+  STATE.matchGroups.splice(gi, 1);
+  saveMatchAssignments(true);
   renderMatchCaptain();
 }
 
-function saveMatchAssignments() {
-  const dtM   = getPillSelected('ms-drive');
-  const pitsM = getPillSelected('ms-pits');
-  let newGroups = [];
-  if (dtM.length)   newGroups.push({ groupName: 'Drive Team', members: dtM });
-  if (pitsM.length) newGroups.push({ groupName: 'Pits',       members: pitsM });
-  STATE.matchGroups.filter(g=>g.groupName!=='Drive Team'&&g.groupName!=='Pits').forEach((group, gi) => {
-    const mems   = getPillSelected('mg-members-'+gi);
-    const nameEl = document.getElementById('mg-name-'+gi);
-    newGroups.push({ groupName: nameEl ? nameEl.value : group.groupName, members: mems });
+function saveMatchAssignments(silent = false) {
+  const dtEl   = document.getElementById('ms-drive');
+  const pitsEl = document.getElementById('ms-pits');
+  if (dtEl)   STATE.driveTeam = getPillSelected('ms-drive');
+  if (pitsEl) STATE.matchPits = getPillSelected('ms-pits');
+  STATE.matchGroups.forEach((group, gi) => {
+    const memsEl = document.getElementById('mg-members-' + gi);
+    const nameEl = document.getElementById('mg-name-' + gi);
+    if (memsEl) group.members = getPillSelected('mg-members-' + gi);
+    if (nameEl) group.groupName = nameEl.value;
   });
-  STATE.matchGroups = newGroups;
   saveLocal();
   apiPost({ type: 'assignments', assignments: buildAssignments() });
-  showToast('Match assignments saved', 'success');
-  renderMatchCaptain();
+  if (!silent) showToast('Match assignments saved', 'success');
 }
 
 function renderMatchMember() {
@@ -1009,19 +1113,27 @@ function renderMatchMember() {
   const numMatches = STATE.setup.numMatches;
   const interval   = STATE.setup.rotationInterval || 3;
   const roles      = ['Stands', 'Pits', 'Break'];
-  const myGroup    = STATE.matchGroups.find(g=>g.members&&g.members.includes(identity.name));
+
+  // Check shared drive team first
+  if (STATE.driveTeam && STATE.driveTeam.includes(identity.name)) {
+    document.getElementById('match-member-content').innerHTML = `<div class="alert alert-teal">${icons.info} You're on the Drive Team. Good luck!</div>`;
+    return;
+  }
+  // Check match-section pits
+  if (STATE.matchPits && STATE.matchPits.includes(identity.name)) {
+    document.getElementById('match-member-content').innerHTML = `<div class="alert alert-orange">${icons.info} You're assigned to the Pits — no match scouting needed.</div>`;
+    return;
+  }
+
+  const myGroup = STATE.matchGroups.find(g=>g.members&&g.members.includes(identity.name));
 
   if (!myGroup) {
     document.getElementById('match-member-content').innerHTML = `
       <div class="empty-state">${icons.empty}<h3>No assignment yet</h3><p>Your captain hasn't set up match assignments yet.</p></div>`;
     return;
   }
-  if (myGroup.groupName === 'Drive Team') {
-    document.getElementById('match-member-content').innerHTML = `<div class="alert alert-teal">${icons.info} You're on the Drive Team. Good luck!</div>`;
-    return;
-  }
 
-  const scoutGroups = STATE.matchGroups.filter(g=>g.groupName!=='Drive Team'&&g.groupName!=='Pits');
+  const scoutGroups = STATE.matchGroups;
   const myGroupIdx  = scoutGroups.findIndex(g=>g.groupName===myGroup.groupName);
 
   let matchItems = '';
@@ -1113,42 +1225,118 @@ function renderPlayoffs() {
 }
 
 function renderPlayoffsCaptain() {
-  const members = STATE.roster.filter(m=>m.name);
-  const teams   = STATE.setup.teams;
-  let html = `<div class="alert alert-orange">${icons.info} Assign pairs to recruit specific alliance partners.</div>`;
+  const memberNames = STATE.roster.filter(m=>m.name).map(m=>m.name);
+  const teams       = STATE.setup.teams;
+  const dt          = STATE.driveTeam || [];
+  const plPits      = STATE.playoffPits || [];
+
+  // Greyed-out for drive team picker = pit + all group members
+  const dtGreyed = [...new Set([...plPits, ...STATE.playoffGroups.flatMap(g=>g.members||[])])];
+  // Greyed-out for pit picker = driveTeam + all group members
+  const pitsGreyed = [...new Set([...dt, ...STATE.playoffGroups.flatMap(g=>g.members||[])])];
+
+  let html = `
+    <div class="alert alert-orange">${icons.info} Assign pairs to recruit specific alliance partners.</div>
+    <div class="card">
+      <div class="card-body">
+        <div class="form-group">
+          <label class="form-label">Drive Team (shared across all sections)</label>
+          <div class="pill-select" id="pl-drive-team">
+            ${renderPillSelect(memberNames, dt, dtGreyed, 'onPlayoffDriveToggle(this)')}
+          </div>
+        </div>
+        <div class="form-group mb-8">
+          <label class="form-label">Pit Crew (playoff section)</label>
+          <div class="pill-select" id="pl-pits">
+            ${renderPillSelect(memberNames, plPits, pitsGreyed, 'onPlayoffPitsToggle(this)')}
+          </div>
+        </div>
+      </div>
+    </div>`;
 
   STATE.playoffGroups.forEach((group, gi) => {
+    // Grey out = driveTeam + playoffPits + all OTHER group members
+    const otherGroupMembers = STATE.playoffGroups
+      .filter((_,i)=>i!==gi).flatMap(g=>g.members||[]);
+    const greyedMembers = [...new Set([...dt, ...plPits, ...otherGroupMembers])];
+
     html += `
       <div class="card">
         <div class="card-header">
           <div style="flex:1">
             <input class="form-input" value="${escHtml(group.groupName)}" id="plg-name-${gi}"
-              style="border:none;padding:0;background:transparent;font-size:15px;font-weight:700;width:100%" placeholder="Pairing name">
+              style="border:none;padding:0;background:transparent;font-size:15px;font-weight:700;width:100%"
+              placeholder="Pairing name" onchange="onPlayoffGroupNameChange(${gi},this.value)">
           </div>
           <button class="btn btn-sm btn-danger" onclick="removePlayoffGroup(${gi})">Remove</button>
         </div>
         <div class="card-body">
           <div class="form-group">
             <label class="form-label">Members</label>
-            <div class="pill-select" id="plg-members-${gi}">${renderPillSelect(members.map(m=>m.name),group.members||[])}</div>
+            <div class="pill-select" id="plg-members-${gi}">
+              ${renderPillSelect(memberNames, group.members||[], greyedMembers, `onPlayoffGroupMemberToggle(this,${gi})`)}
+            </div>
           </div>
           <div class="form-group">
             <label class="form-label">Target Teams to Recruit</label>
-            <div class="pill-select" id="plg-teams-${gi}">${renderPillSelect(teams.map(t=>t.number+' '+t.name),(group.targets||[]).map(t=>t.number+' '+t.name))}</div>
+            <div class="pill-select" id="plg-teams-${gi}">
+              ${renderPillSelect(teams.map(t=>t.number+' '+t.name),(group.targets||[]).map(t=>t.number+' '+t.name),[],`onPlayoffGroupTeamToggle(this,${gi})`)}
+            </div>
           </div>
           <div class="form-group mb-8">
             <label class="form-label">Why They'd Be a Good Partner (talking points)</label>
-            <textarea class="form-input" id="plg-notes-${gi}" rows="3" placeholder="e.g. Strong auto, good defense...">${escHtml(group.notes||'')}</textarea>
+            <textarea class="form-input" id="plg-notes-${gi}" rows="3"
+              placeholder="e.g. Strong auto, good defense..."
+              onchange="onPlayoffGroupNotesChange(${gi},this.value)">${escHtml(group.notes||'')}</textarea>
           </div>
         </div>
       </div>`;
   });
 
-  html += `
-    <button class="btn btn-secondary btn-full mt-8" onclick="addPlayoffGroup()">+ Add Pairing</button>
-    <button class="btn btn-primary btn-full mt-8" onclick="savePlayoffAssignments()">Save Playoff Assignments</button>`;
-
+  html += `<button class="btn btn-secondary btn-full mt-8" onclick="addPlayoffGroup()">+ Add Pairing</button>`;
   document.getElementById('playoffs-captain-content').innerHTML = html;
+}
+
+// ── PLAYOFF AUTO-SAVE HANDLERS ────────────────────────────────
+function onPlayoffDriveToggle(el) {
+  pillToggle(el);
+  STATE.driveTeam = getPillSelected('pl-drive-team');
+  savePlayoffAssignments(true);
+}
+
+function onPlayoffPitsToggle(el) {
+  pillToggle(el);
+  STATE.playoffPits = getPillSelected('pl-pits');
+  savePlayoffAssignments(true);
+  renderPlayoffsCaptain();
+}
+
+function onPlayoffGroupMemberToggle(el, gi) {
+  pillToggle(el);
+  STATE.playoffGroups[gi].members = getPillSelected('plg-members-' + gi);
+  savePlayoffAssignments(true);
+  renderPlayoffsCaptain();
+}
+
+function onPlayoffGroupTeamToggle(el, gi) {
+  pillToggle(el);
+  const teams    = STATE.setup.teams;
+  const teamVals = getPillSelected('plg-teams-' + gi);
+  STATE.playoffGroups[gi].targets = teamVals.map(v => {
+    const num = v.split(' ')[0];
+    return teams.find(t=>t.number===num) || { number: num, name: v };
+  });
+  savePlayoffAssignments(true);
+}
+
+function onPlayoffGroupNameChange(gi, val) {
+  STATE.playoffGroups[gi].groupName = val;
+  savePlayoffAssignments(true);
+}
+
+function onPlayoffGroupNotesChange(gi, val) {
+  STATE.playoffGroups[gi].notes = val;
+  savePlayoffAssignments(true);
 }
 
 function addPlayoffGroup() {
@@ -1158,27 +1346,42 @@ function addPlayoffGroup() {
 
 function removePlayoffGroup(gi) {
   STATE.playoffGroups.splice(gi, 1);
+  savePlayoffAssignments(true);
   renderPlayoffsCaptain();
 }
 
-function savePlayoffAssignments() {
-  const teams = STATE.setup.teams;
-  STATE.playoffGroups = STATE.playoffGroups.map((group, gi) => {
-    const mems      = getPillSelected('plg-members-'+gi);
-    const teamVals  = getPillSelected('plg-teams-'+gi);
-    const selTeams  = teamVals.map(v => { const num = v.split(' ')[0]; return teams.find(t=>t.number===num)||{number:num,name:v}; });
-    const notesEl   = document.getElementById('plg-notes-'+gi);
-    const nameEl    = document.getElementById('plg-name-'+gi);
-    return { groupName: nameEl?nameEl.value:group.groupName, members: mems, targets: selTeams, notes: notesEl?notesEl.value:group.notes };
+function savePlayoffAssignments(silent = false) {
+  const dtEl   = document.getElementById('pl-drive-team');
+  const pitsEl = document.getElementById('pl-pits');
+  if (dtEl)   STATE.driveTeam   = getPillSelected('pl-drive-team');
+  if (pitsEl) STATE.playoffPits = getPillSelected('pl-pits');
+  // groups are updated in-place by individual handlers; persist name/notes if elements exist
+  STATE.playoffGroups.forEach((group, gi) => {
+    const nameEl  = document.getElementById('plg-name-' + gi);
+    const notesEl = document.getElementById('plg-notes-' + gi);
+    if (nameEl)  group.groupName = nameEl.value;
+    if (notesEl) group.notes     = notesEl.value;
   });
   saveLocal();
   apiPost({ type: 'assignments', assignments: buildAssignments() });
-  showToast('Playoff assignments saved', 'success');
+  if (!silent) showToast('Playoff assignments saved', 'success');
 }
 
 function renderPlayoffsMember() {
   const identity = STATE.identity;
-  const myGroup  = STATE.playoffGroups.find(g=>g.members&&g.members.includes(identity.name));
+
+  // Check shared drive team first
+  if (STATE.driveTeam && STATE.driveTeam.includes(identity.name)) {
+    document.getElementById('playoffs-member-content').innerHTML = `<div class="alert alert-teal">${icons.info} You're on the Drive Team. Good luck in playoffs!</div>`;
+    return;
+  }
+  // Check playoff-section pits
+  if (STATE.playoffPits && STATE.playoffPits.includes(identity.name)) {
+    document.getElementById('playoffs-member-content').innerHTML = `<div class="alert alert-orange">${icons.info} You're assigned to the Pits — no playoff recruiting needed.</div>`;
+    return;
+  }
+
+  const myGroup = STATE.playoffGroups.find(g=>g.members&&g.members.includes(identity.name));
 
   if (!myGroup) {
     document.getElementById('playoffs-member-content').innerHTML = `
