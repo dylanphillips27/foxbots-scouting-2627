@@ -283,25 +283,14 @@ function renderIdentityList() {
     return;
   }
 
-  const groups = {};
-  members.forEach(m => {
-    const g = m.group || 'Unassigned';
-    if (!groups[g]) groups[g] = [];
-    groups[g].push(m);
-  });
-
-  list.innerHTML = Object.entries(groups).map(([group, mems]) => `
-    <div class="section-label">${escHtml(group)}</div>
-    ${mems.map(m => `
-      <button class="identity-item" onclick="selectIdentity(${JSON.stringify(escHtml(m.name))}, ${JSON.stringify(escHtml(m.group||''))})">
-        <div class="identity-avatar">${initials(m.name)}</div>
-        <div>
-          <div class="identity-name">${escHtml(m.name)}</div>
-          <div class="identity-group">${escHtml(m.group||'')}</div>
-        </div>
-        <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
-      </button>
-    `).join('')}
+  list.innerHTML = members.map(m => `
+    <button class="identity-item" data-name="${escHtml(m.name)}" onclick="selectIdentity(this.dataset.name, '')">
+      <div class="identity-avatar">${initials(m.name)}</div>
+      <div>
+        <div class="identity-name">${escHtml(m.name)}</div>
+      </div>
+      <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
+    </button>
   `).join('');
 }
 
