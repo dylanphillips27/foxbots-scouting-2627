@@ -1,0 +1,825 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Foxbots Scouting — 25657</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
+  <style>
+    /* ── Design Tokens ─────────────────────────────────────── */
+    :root {
+      --bg:           #F2F4F6;
+      --surface:      #FFFFFF;
+      --surface-2:    #EAECEF;
+      --border:       #DDE1E7;
+      --text:         #1A1D23;
+      --text-2:       #5A6070;
+      --text-3:       #8B93A1;
+      --teal:         #00C2B3;
+      --teal-dark:    #009E92;
+      --teal-light:   #E0FAF8;
+      --orange:       #FF6B35;
+      --orange-light: #FFF0EB;
+      --red:          #E53E3E;
+      --red-light:    #FFF5F5;
+      --green:        #38A169;
+      --green-light:  #F0FFF4;
+      --shadow-sm:    0 1px 3px rgba(0,0,0,0.08);
+      --shadow-md:    0 4px 12px rgba(0,0,0,0.10);
+      --shadow-lg:    0 8px 24px rgba(0,0,0,0.12);
+      --radius:       14px;
+      --radius-sm:    8px;
+      --tab-height:   64px;
+    }
+
+    /* ── Reset & Base ──────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; overflow: hidden; }
+    body {
+      font-family: 'Inter', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      -webkit-font-smoothing: antialiased;
+    }
+    button { cursor: pointer; border: none; background: none; font-family: inherit; }
+    input, textarea, select { font-family: inherit; }
+    * { -webkit-tap-highlight-color: transparent; }
+
+    /* ── App Shell ─────────────────────────────────────────── */
+    #app { height: 100vh; display: flex; flex-direction: column; }
+
+    /* ── Auth Screen ───────────────────────────────────────── */
+    #auth-screen {
+      position: fixed; inset: 0;
+      background: var(--bg);
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      padding: 32px 24px;
+      z-index: 1000;
+    }
+    .auth-logo {
+      width: 72px; height: 72px;
+      background: var(--teal);
+      border-radius: 20px;
+      display: flex; align-items: center; justify-content: center;
+      margin-bottom: 24px;
+      box-shadow: 0 4px 16px rgba(0,194,179,0.35);
+    }
+    .auth-logo svg { width: 40px; height: 40px; }
+    .auth-title {
+      font-family: 'Space Grotesk', sans-serif;
+      font-size: 26px; font-weight: 700;
+      color: var(--text); margin-bottom: 4px;
+    }
+    .auth-subtitle {
+      font-size: 14px; color: var(--text-2);
+      margin-bottom: 40px; text-align: center;
+    }
+    .auth-card {
+      background: var(--surface);
+      border-radius: var(--radius);
+      padding: 28px 24px;
+      width: 100%; max-width: 360px;
+      box-shadow: var(--shadow-md);
+    }
+    .auth-card label {
+      display: block; font-size: 13px; font-weight: 600;
+      color: var(--text-2); margin-bottom: 8px;
+      text-transform: uppercase; letter-spacing: 0.05em;
+    }
+    .auth-input {
+      width: 100%; padding: 14px 16px;
+      border: 2px solid var(--border);
+      border-radius: var(--radius-sm);
+      font-size: 18px; color: var(--text);
+      outline: none; transition: border-color 0.15s;
+      background: var(--bg);
+      letter-spacing: 0.1em;
+    }
+    .auth-input:focus { border-color: var(--teal); }
+    .auth-input.error { border-color: var(--red); }
+    .auth-error {
+      font-size: 13px; color: var(--red);
+      margin-top: 8px; display: none;
+    }
+    .auth-btn {
+      width: 100%; margin-top: 20px;
+      padding: 16px;
+      background: var(--teal);
+      color: white; font-size: 16px; font-weight: 600;
+      border-radius: var(--radius-sm);
+      transition: background 0.15s, transform 0.1s;
+    }
+    .auth-btn:active { background: var(--teal-dark); transform: scale(0.98); }
+    .auth-switch {
+      margin-top: 20px; text-align: center;
+      font-size: 13px; color: var(--text-2);
+    }
+    .auth-switch button {
+      color: var(--teal); font-weight: 600; font-size: 13px;
+      text-decoration: underline;
+    }
+    .auth-roles {
+      display: flex; gap: 10px; margin-bottom: 24px;
+    }
+    .auth-role-btn {
+      flex: 1; padding: 12px;
+      border: 2px solid var(--border);
+      border-radius: var(--radius-sm);
+      font-size: 14px; font-weight: 600;
+      color: var(--text-2);
+      transition: all 0.15s;
+    }
+    .auth-role-btn.active {
+      border-color: var(--teal);
+      background: var(--teal-light);
+      color: var(--teal-dark);
+    }
+
+    /* ── Identity Picker ───────────────────────────────────── */
+    #identity-screen {
+      position: fixed; inset: 0;
+      background: var(--bg);
+      display: flex; flex-direction: column;
+      padding: 0;
+      z-index: 999;
+      display: none;
+    }
+    .identity-header {
+      background: var(--surface);
+      padding: 56px 24px 20px;
+      border-bottom: 1px solid var(--border);
+    }
+    .identity-header h2 {
+      font-family: 'Space Grotesk', sans-serif;
+      font-size: 22px; font-weight: 700;
+    }
+    .identity-header p { font-size: 14px; color: var(--text-2); margin-top: 4px; }
+    .identity-list {
+      flex: 1; overflow-y: auto;
+      padding: 16px;
+      display: flex; flex-direction: column; gap: 10px;
+    }
+    .identity-item {
+      background: var(--surface);
+      border: 2px solid var(--border);
+      border-radius: var(--radius);
+      padding: 16px 18px;
+      display: flex; align-items: center; gap: 14px;
+      transition: all 0.15s;
+    }
+    .identity-item:active { border-color: var(--teal); background: var(--teal-light); }
+    .identity-avatar {
+      width: 42px; height: 42px;
+      background: var(--teal-light);
+      border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      font-weight: 700; font-size: 16px; color: var(--teal-dark);
+      flex-shrink: 0;
+    }
+    .identity-name { font-size: 16px; font-weight: 600; }
+    .identity-group { font-size: 13px; color: var(--text-2); margin-top: 2px; }
+
+    /* ── Top Bar ───────────────────────────────────────────── */
+    #topbar {
+      background: var(--surface);
+      padding: 48px 20px 14px;
+      border-bottom: 1px solid var(--border);
+      display: flex; align-items: center; justify-content: space-between;
+      flex-shrink: 0;
+    }
+    .topbar-left { display: flex; align-items: center; gap: 10px; }
+    .topbar-logo {
+      width: 32px; height: 32px;
+      background: var(--teal);
+      border-radius: 8px;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .topbar-logo svg { width: 18px; height: 18px; }
+    .topbar-title {
+      font-family: 'Space Grotesk', sans-serif;
+      font-size: 17px; font-weight: 700; color: var(--text);
+    }
+    .topbar-user {
+      display: flex; align-items: center; gap: 8px;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      padding: 6px 12px 6px 8px;
+    }
+    .topbar-avatar {
+      width: 26px; height: 26px;
+      background: var(--teal);
+      border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 11px; font-weight: 700; color: white;
+    }
+    .topbar-name { font-size: 13px; font-weight: 600; color: var(--text); }
+    .captain-badge {
+      background: var(--orange);
+      color: white; font-size: 10px; font-weight: 700;
+      padding: 2px 7px; border-radius: 10px;
+      text-transform: uppercase; letter-spacing: 0.05em;
+    }
+
+    /* ── Page Content ──────────────────────────────────────── */
+    #page-content {
+      flex: 1; overflow-y: auto;
+      padding-bottom: calc(var(--tab-height) + 16px);
+    }
+
+    /* ── Bottom Tab Bar ────────────────────────────────────── */
+    #tabbar {
+      height: var(--tab-height);
+      background: var(--surface);
+      border-top: 1px solid var(--border);
+      display: flex;
+      flex-shrink: 0;
+      box-shadow: 0 -4px 12px rgba(0,0,0,0.06);
+    }
+    .tab-btn {
+      flex: 1; display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      gap: 4px; padding: 8px 4px;
+      color: var(--text-3);
+      font-size: 11px; font-weight: 600;
+      transition: color 0.15s;
+      position: relative;
+    }
+    .tab-btn svg { width: 22px; height: 22px; transition: transform 0.15s; }
+    .tab-btn.active { color: var(--teal); }
+    .tab-btn.active svg { transform: scale(1.1); }
+    .tab-btn.active::before {
+      content: '';
+      position: absolute; top: 0; left: 50%;
+      transform: translateX(-50%);
+      width: 32px; height: 3px;
+      background: var(--teal);
+      border-radius: 0 0 3px 3px;
+    }
+
+    /* ── Section Shell ─────────────────────────────────────── */
+    .page { display: none; padding: 16px; }
+    .page.active { display: block; }
+    .page-header {
+      margin-bottom: 20px;
+    }
+    .page-title {
+      font-family: 'Space Grotesk', sans-serif;
+      font-size: 22px; font-weight: 700;
+    }
+    .page-subtitle { font-size: 14px; color: var(--text-2); margin-top: 4px; }
+
+    /* ── Cards ─────────────────────────────────────────────── */
+    .card {
+      background: var(--surface);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow-sm);
+      overflow: hidden;
+      margin-bottom: 14px;
+    }
+    .card-header {
+      padding: 16px 18px 12px;
+      border-bottom: 1px solid var(--border);
+      display: flex; align-items: center; gap: 10px;
+    }
+    .card-header-icon {
+      width: 34px; height: 34px;
+      background: var(--teal-light);
+      border-radius: 8px;
+      display: flex; align-items: center; justify-content: center;
+      flex-shrink: 0;
+    }
+    .card-header-icon svg { width: 18px; height: 18px; color: var(--teal-dark); }
+    .card-title { font-size: 15px; font-weight: 700; }
+    .card-subtitle { font-size: 12px; color: var(--text-2); margin-top: 1px; }
+    .card-body { padding: 16px 18px; }
+
+    /* ── Form Elements ─────────────────────────────────────── */
+    .form-group { margin-bottom: 18px; }
+    .form-label {
+      display: block; font-size: 12px; font-weight: 600;
+      color: var(--text-2); margin-bottom: 6px;
+      text-transform: uppercase; letter-spacing: 0.05em;
+    }
+    .form-input {
+      width: 100%; padding: 13px 14px;
+      border: 2px solid var(--border);
+      border-radius: var(--radius-sm);
+      font-size: 16px; color: var(--text);
+      background: var(--bg);
+      outline: none; transition: border-color 0.15s;
+    }
+    .form-input:focus { border-color: var(--teal); background: white; }
+    textarea.form-input { resize: vertical; min-height: 90px; }
+    .form-select {
+      width: 100%; padding: 13px 14px;
+      border: 2px solid var(--border);
+      border-radius: var(--radius-sm);
+      font-size: 16px; color: var(--text);
+      background: var(--bg);
+      outline: none; appearance: none;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%235A6070' stroke-width='2'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
+      background-repeat: no-repeat;
+      background-position: right 14px center;
+    }
+
+    /* ── Buttons ───────────────────────────────────────────── */
+    .btn {
+      display: inline-flex; align-items: center; justify-content: center;
+      gap: 8px; padding: 13px 20px;
+      border-radius: var(--radius-sm);
+      font-size: 15px; font-weight: 600;
+      transition: all 0.15s;
+    }
+    .btn:active { transform: scale(0.97); }
+    .btn-primary { background: var(--teal); color: white; }
+    .btn-primary:active { background: var(--teal-dark); }
+    .btn-secondary { background: var(--surface-2); color: var(--text); }
+    .btn-danger { background: var(--red-light); color: var(--red); }
+    .btn-orange { background: var(--orange-light); color: var(--orange); }
+    .btn-full { width: 100%; }
+    .btn-sm { padding: 8px 14px; font-size: 13px; }
+    .btn svg { width: 17px; height: 17px; }
+
+    /* ── Tags / Chips ──────────────────────────────────────── */
+    .chip {
+      display: inline-flex; align-items: center; gap: 5px;
+      padding: 5px 10px; border-radius: 20px;
+      font-size: 12px; font-weight: 600;
+    }
+    .chip-teal { background: var(--teal-light); color: var(--teal-dark); }
+    .chip-orange { background: var(--orange-light); color: var(--orange); }
+    .chip-gray { background: var(--surface-2); color: var(--text-2); }
+    .chip-green { background: var(--green-light); color: var(--green); }
+    .chip-red { background: var(--red-light); color: var(--red); }
+
+    /* ── List Items ────────────────────────────────────────── */
+    .list-item {
+      display: flex; align-items: center;
+      padding: 14px 18px; gap: 14px;
+      border-bottom: 1px solid var(--border);
+      transition: background 0.1s;
+    }
+    .list-item:last-child { border-bottom: none; }
+    .list-item:active { background: var(--bg); }
+    .list-item-main { flex: 1; min-width: 0; }
+    .list-item-title { font-size: 15px; font-weight: 600; }
+    .list-item-sub { font-size: 13px; color: var(--text-2); margin-top: 2px; }
+    .list-item-right { flex-shrink: 0; color: var(--text-3); }
+    .chevron { width: 18px; height: 18px; }
+
+    /* ── Empty State ───────────────────────────────────────── */
+    .empty-state {
+      text-align: center; padding: 48px 24px;
+      color: var(--text-2);
+    }
+    .empty-state svg { width: 48px; height: 48px; color: var(--border); margin-bottom: 16px; }
+    .empty-state h3 { font-size: 16px; font-weight: 600; color: var(--text); margin-bottom: 6px; }
+    .empty-state p { font-size: 14px; }
+
+    /* ── Alert Banner ──────────────────────────────────────── */
+    .alert {
+      padding: 12px 16px; border-radius: var(--radius-sm);
+      font-size: 14px; font-weight: 500;
+      display: flex; align-items: flex-start; gap: 10px;
+      margin-bottom: 14px;
+    }
+    .alert svg { width: 18px; height: 18px; flex-shrink: 0; margin-top: 1px; }
+    .alert-orange { background: var(--orange-light); color: var(--orange); }
+    .alert-teal { background: var(--teal-light); color: var(--teal-dark); }
+
+    /* ── Drawer / Modal ────────────────────────────────────── */
+    .drawer-overlay {
+      position: fixed; inset: 0;
+      background: rgba(0,0,0,0.35);
+      z-index: 500;
+      display: none;
+      backdrop-filter: blur(2px);
+    }
+    .drawer-overlay.open { display: block; }
+    .drawer {
+      position: fixed; bottom: 0; left: 0; right: 0;
+      background: var(--surface);
+      border-radius: 20px 20px 0 0;
+      padding: 0 0 32px;
+      z-index: 501;
+      transform: translateY(100%);
+      transition: transform 0.3s cubic-bezier(0.32, 0.72, 0, 1);
+      max-height: 90vh;
+      overflow-y: auto;
+    }
+    .drawer.open { transform: translateY(0); }
+    .drawer-handle {
+      width: 36px; height: 4px;
+      background: var(--border);
+      border-radius: 2px;
+      margin: 12px auto 4px;
+    }
+    .drawer-header {
+      padding: 12px 20px 16px;
+      border-bottom: 1px solid var(--border);
+      display: flex; align-items: center; justify-content: space-between;
+    }
+    .drawer-title { font-size: 17px; font-weight: 700; }
+    .drawer-close {
+      width: 32px; height: 32px;
+      border-radius: 50%;
+      background: var(--surface-2);
+      display: flex; align-items: center; justify-content: center;
+      color: var(--text-2);
+    }
+    .drawer-body { padding: 20px; }
+
+    /* ── Section Divider ───────────────────────────────────── */
+    .section-label {
+      font-size: 11px; font-weight: 700;
+      color: var(--text-3); text-transform: uppercase;
+      letter-spacing: 0.08em; padding: 4px 0 8px;
+      margin-top: 4px;
+    }
+
+    /* ── Toggle ────────────────────────────────────────────── */
+    .toggle-row {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 14px 18px;
+      border-bottom: 1px solid var(--border);
+    }
+    .toggle-row:last-child { border-bottom: none; }
+    .toggle-label { font-size: 15px; font-weight: 500; }
+    .toggle-sub { font-size: 12px; color: var(--text-2); margin-top: 2px; }
+    .toggle {
+      width: 48px; height: 28px;
+      background: var(--border); border-radius: 14px;
+      position: relative; transition: background 0.2s;
+      flex-shrink: 0;
+    }
+    .toggle.on { background: var(--teal); }
+    .toggle::after {
+      content: '';
+      position: absolute; top: 3px; left: 3px;
+      width: 22px; height: 22px;
+      background: white; border-radius: 50%;
+      transition: transform 0.2s;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+    }
+    .toggle.on::after { transform: translateX(20px); }
+
+    /* ── Match Badge ───────────────────────────────────────── */
+    .match-badge {
+      width: 40px; height: 40px;
+      background: var(--teal-light);
+      border-radius: 10px;
+      display: flex; align-items: center; justify-content: center;
+      font-family: 'Space Grotesk', sans-serif;
+      font-size: 14px; font-weight: 700;
+      color: var(--teal-dark);
+      flex-shrink: 0;
+    }
+    .match-badge.pits { background: var(--orange-light); color: var(--orange); }
+    .match-badge.break { background: var(--surface-2); color: var(--text-3); }
+
+    /* ── Pill Select (multi-select chips) ──────────────────── */
+    .pill-select { display: flex; flex-wrap: wrap; gap: 8px; }
+    .pill-option {
+      padding: 8px 14px;
+      border: 2px solid var(--border);
+      border-radius: 20px;
+      font-size: 14px; font-weight: 500;
+      color: var(--text-2);
+      transition: all 0.15s;
+    }
+    .pill-option.selected {
+      border-color: var(--teal);
+      background: var(--teal-light);
+      color: var(--teal-dark);
+    }
+
+    /* ── Scouting Form ─────────────────────────────────────── */
+    .scout-section-header {
+      background: var(--teal);
+      color: white;
+      padding: 10px 16px;
+      font-size: 13px; font-weight: 700;
+      text-transform: uppercase; letter-spacing: 0.06em;
+      margin: 0 -18px;
+    }
+    .scout-section-header.orange { background: var(--orange); }
+    .scout-section-header.purple { background: #7C3AED; }
+
+    .radio-group { display: flex; flex-direction: column; gap: 8px; }
+    .radio-option {
+      display: flex; align-items: center; gap: 12px;
+      padding: 12px 14px;
+      border: 2px solid var(--border);
+      border-radius: var(--radius-sm);
+      font-size: 14px; font-weight: 500;
+      transition: all 0.15s;
+    }
+    .radio-option.selected {
+      border-color: var(--teal);
+      background: var(--teal-light);
+      color: var(--teal-dark);
+    }
+    .radio-dot {
+      width: 18px; height: 18px;
+      border: 2px solid var(--border);
+      border-radius: 50%; flex-shrink: 0;
+      transition: all 0.15s;
+    }
+    .radio-option.selected .radio-dot {
+      border-color: var(--teal);
+      background: var(--teal);
+      box-shadow: inset 0 0 0 3px white;
+    }
+
+    .stepper {
+      display: flex; align-items: center; gap: 0;
+      border: 2px solid var(--border); border-radius: var(--radius-sm);
+      overflow: hidden; width: fit-content;
+    }
+    .stepper-btn {
+      width: 44px; height: 44px;
+      background: var(--bg);
+      font-size: 22px; font-weight: 500; color: var(--text);
+      display: flex; align-items: center; justify-content: center;
+      transition: background 0.1s;
+    }
+    .stepper-btn:active { background: var(--surface-2); }
+    .stepper-val {
+      min-width: 48px; height: 44px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 18px; font-weight: 700;
+      border-left: 2px solid var(--border);
+      border-right: 2px solid var(--border);
+    }
+
+    /* ── Results ───────────────────────────────────────────── */
+    .result-team-card {
+      background: var(--surface);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow-sm);
+      margin-bottom: 14px;
+      overflow: hidden;
+    }
+    .result-team-header {
+      padding: 14px 18px;
+      display: flex; align-items: center; justify-content: space-between;
+      border-bottom: 1px solid var(--border);
+    }
+    .result-team-num {
+      font-family: 'Space Grotesk', sans-serif;
+      font-size: 20px; font-weight: 700;
+    }
+    .result-team-name { font-size: 13px; color: var(--text-2); margin-top: 2px; }
+    .result-expand { color: var(--text-3); }
+
+    /* ── Sync indicator ────────────────────────────────────── */
+    .sync-dot {
+      width: 8px; height: 8px; border-radius: 50%;
+      background: var(--green); display: inline-block;
+      margin-right: 5px;
+    }
+    .sync-dot.syncing { background: var(--orange); animation: pulse 1s infinite; }
+    .sync-dot.error { background: var(--red); }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
+
+    /* ── Utility ───────────────────────────────────────────── */
+    .divider { height: 1px; background: var(--border); margin: 16px 0; }
+    .text-sm { font-size: 13px; }
+    .text-xs { font-size: 11px; }
+    .text-muted { color: var(--text-2); }
+    .text-teal { color: var(--teal-dark); }
+    .text-orange { color: var(--orange); }
+    .fw-600 { font-weight: 600; }
+    .mt-8 { margin-top: 8px; }
+    .mt-12 { margin-top: 12px; }
+    .mt-16 { margin-top: 16px; }
+    .mb-8 { margin-bottom: 8px; }
+    .flex { display: flex; }
+    .flex-center { display: flex; align-items: center; }
+    .gap-8 { gap: 8px; }
+    .gap-12 { gap: 12px; }
+    .hidden { display: none !important; }
+
+    /* ── Loading ───────────────────────────────────────────── */
+    .spinner {
+      width: 24px; height: 24px;
+      border: 3px solid var(--border);
+      border-top-color: var(--teal);
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    #loading-overlay {
+      position: fixed; inset: 0; background: rgba(242,244,246,0.85);
+      display: none; align-items: center; justify-content: center;
+      z-index: 900; flex-direction: column; gap: 16px;
+    }
+    #loading-overlay.show { display: flex; }
+    .loading-text { font-size: 14px; font-weight: 600; color: var(--text-2); }
+
+    /* ── Toast ─────────────────────────────────────────────── */
+    #toast {
+      position: fixed; bottom: calc(var(--tab-height) + 16px); left: 50%;
+      transform: translateX(-50%) translateY(20px);
+      background: var(--text); color: white;
+      padding: 12px 20px; border-radius: 20px;
+      font-size: 14px; font-weight: 500;
+      opacity: 0; transition: all 0.25s;
+      pointer-events: none; white-space: nowrap;
+      z-index: 800; box-shadow: var(--shadow-lg);
+    }
+    #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+    #toast.success { background: var(--green); }
+    #toast.error { background: var(--red); }
+
+    /* ── Playoff Status ────────────────────────────────────── */
+    .status-row {
+      display: flex; align-items: center; gap: 10px;
+      padding: 14px 18px;
+      border-bottom: 1px solid var(--border);
+    }
+    .status-row:last-child { border-bottom: none; }
+    .status-icon {
+      width: 36px; height: 36px; border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      flex-shrink: 0;
+    }
+    .status-icon.good { background: var(--green-light); color: var(--green); }
+    .status-icon.bad { background: var(--red-light); color: var(--red); }
+    .status-icon.pending { background: var(--surface-2); color: var(--text-3); }
+    .status-btn-row { display: flex; gap: 8px; margin-top: 8px; }
+    .status-btn {
+      flex: 1; padding: 10px; border-radius: var(--radius-sm);
+      font-size: 13px; font-weight: 600; border: 2px solid var(--border);
+      color: var(--text-2); transition: all 0.15s;
+    }
+    .status-btn.good { border-color: var(--green); background: var(--green-light); color: var(--green); }
+    .status-btn.bad { border-color: var(--red); background: var(--red-light); color: var(--red); }
+  </style>
+</head>
+<body>
+
+<!-- ── Auth Screen ─────────────────────────────────────────── -->
+<div id="auth-screen">
+  <div class="auth-logo">
+    <svg viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <path d="M20 4L36 12V28L20 36L4 28V12L20 4Z" stroke="white" stroke-width="2.5" fill="none"/>
+      <circle cx="20" cy="20" r="5" fill="white"/>
+      <path d="M20 9V15M20 25V31M9 20H15M25 20H31" stroke="white" stroke-width="2" stroke-linecap="round"/>
+    </svg>
+  </div>
+  <div class="auth-title">Foxbots Scouting</div>
+  <div class="auth-subtitle">Team 25657 — Competition Day</div>
+
+  <div class="auth-card">
+    <div class="auth-roles">
+      <button class="auth-role-btn active" onclick="setAuthRole('member')" id="role-member">Team Member</button>
+      <button class="auth-role-btn" onclick="setAuthRole('captain')" id="role-captain">Captain</button>
+    </div>
+    <label for="auth-pw">Passcode</label>
+    <input class="auth-input" type="password" id="auth-pw" placeholder="••••••••" autocomplete="off"
+      onkeydown="if(event.key==='Enter')attemptAuth()">
+    <div class="auth-error" id="auth-error">Incorrect passcode. Try again.</div>
+    <button class="auth-btn" onclick="attemptAuth()">Enter</button>
+  </div>
+</div>
+
+<!-- ── Identity Screen ─────────────────────────────────────── -->
+<div id="identity-screen">
+  <div class="identity-header">
+    <h2>Who are you?</h2>
+    <p>Select your name to see your assignments</p>
+  </div>
+  <div class="identity-list" id="identity-list"></div>
+</div>
+
+<!-- ── Loading Overlay ─────────────────────────────────────── -->
+<div id="loading-overlay">
+  <div class="spinner"></div>
+  <div class="loading-text" id="loading-text">Loading...</div>
+</div>
+
+<!-- ── Toast ───────────────────────────────────────────────── -->
+<div id="toast"></div>
+
+<!-- ── Main App ────────────────────────────────────────────── -->
+<div id="app" style="display:none">
+  <!-- Top Bar -->
+  <div id="topbar">
+    <div class="topbar-left">
+      <div class="topbar-logo">
+        <svg viewBox="0 0 40 40" fill="none"><path d="M20 4L36 12V28L20 36L4 28V12L20 4Z" stroke="white" stroke-width="2.5" fill="none"/><circle cx="20" cy="20" r="4" fill="white"/></svg>
+      </div>
+      <div class="topbar-title">Foxbots</div>
+    </div>
+    <div style="display:flex;align-items:center;gap:8px">
+      <span class="sync-dot" id="sync-dot"></span>
+      <div class="topbar-user" onclick="switchIdentity()">
+        <div class="topbar-avatar" id="topbar-avatar">?</div>
+        <div class="topbar-name" id="topbar-name">—</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Page Content -->
+  <div id="page-content">
+
+    <!-- ═══ PREMATCH ═══════════════════════════════════════ -->
+    <div class="page" id="page-prematch">
+      <div id="prematch-captain-view" class="hidden">
+        <!-- Captain: assign groups to teams -->
+        <div class="page-header">
+          <div class="page-title">Pre-Match Setup</div>
+          <div class="page-subtitle">Assign scouting groups to teams</div>
+        </div>
+        <div id="prematch-captain-content"></div>
+      </div>
+      <div id="prematch-member-view" class="hidden">
+        <!-- Member: see assigned teams, tap to scout -->
+        <div class="page-header">
+          <div class="page-title">Pre-Match Scouting</div>
+          <div class="page-subtitle" id="prematch-member-subtitle">Your teams to scout</div>
+        </div>
+        <div id="prematch-member-content"></div>
+      </div>
+    </div>
+
+    <!-- ═══ MATCH SCOUTING ══════════════════════════════════ -->
+    <div class="page" id="page-match">
+      <div id="match-captain-view" class="hidden">
+        <div class="page-header">
+          <div class="page-title">Match Scouting</div>
+          <div class="page-subtitle">Groups & rotation schedule</div>
+        </div>
+        <div id="match-captain-content"></div>
+      </div>
+      <div id="match-member-view" class="hidden">
+        <div class="page-header">
+          <div class="page-title">Match Scouting</div>
+          <div class="page-subtitle" id="match-member-subtitle">Your match assignments</div>
+        </div>
+        <div id="match-member-content"></div>
+      </div>
+    </div>
+
+    <!-- ═══ PLAYOFFS ════════════════════════════════════════ -->
+    <div class="page" id="page-playoffs">
+      <div id="playoffs-captain-view" class="hidden">
+        <div class="page-header">
+          <div class="page-title">Playoffs</div>
+          <div class="page-subtitle">Assign target teams & talking points</div>
+        </div>
+        <div id="playoffs-captain-content"></div>
+      </div>
+      <div id="playoffs-member-view" class="hidden">
+        <div class="page-header">
+          <div class="page-title">Playoffs</div>
+          <div class="page-subtitle">Your targets</div>
+        </div>
+        <div id="playoffs-member-content"></div>
+      </div>
+    </div>
+
+    <!-- ═══ SETUP (captain only) ════════════════════════════ -->
+    <div class="page" id="page-setup">
+      <div class="page-header">
+        <div class="page-title">Setup</div>
+        <div class="page-subtitle">Configure this event</div>
+      </div>
+      <div id="setup-content"></div>
+    </div>
+
+    <!-- ═══ RESULTS (captain only) ══════════════════════════ -->
+    <div class="page" id="page-results">
+      <div class="page-header">
+        <div class="page-title">Results</div>
+        <div class="page-subtitle">All scouted data by team</div>
+      </div>
+      <div id="results-content"></div>
+    </div>
+
+  </div><!-- /page-content -->
+
+  <!-- Bottom Tab Bar -->
+  <div id="tabbar"></div>
+</div><!-- /app -->
+
+<!-- ── Drawer (shared) ─────────────────────────────────────── -->
+<div class="drawer-overlay" id="drawer-overlay" onclick="closeDrawer()"></div>
+<div class="drawer" id="drawer">
+  <div class="drawer-handle"></div>
+  <div class="drawer-header">
+    <div class="drawer-title" id="drawer-title">Details</div>
+    <button class="drawer-close" onclick="closeDrawer()">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+    </button>
+  </div>
+  <div class="drawer-body" id="drawer-body"></div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>
