@@ -47,7 +47,9 @@
     * { -webkit-tap-highlight-color: transparent; }
 
     /* ── App Shell ─────────────────────────────────────────── */
-    #app { height: 100vh; display: flex; flex-direction: column; }
+    /* 100vh on iPhone Safari is the height with the toolbar hidden, which pushes the tab bar underneath it; dvh tracks the visible area */
+    /* Pinned to the visible screen: Safari keeps fixed boxes clear of its bottom toolbar, unlike 100vh sizing */
+    #app { position: fixed; top: 0; left: 0; right: 0; bottom: 0; display: flex; flex-direction: column; }
 
     /* ── Auth Screen ───────────────────────────────────────── */
     #auth-screen {
@@ -232,6 +234,8 @@
     /* ── Bottom Tab Bar ────────────────────────────────────── */
     #tabbar {
       height: var(--tab-height);
+      box-sizing: content-box;
+      padding-bottom: env(safe-area-inset-bottom, 0px);
       background: var(--surface);
       border-top: 1px solid var(--border);
       display: flex;
@@ -828,6 +832,6 @@
   <div class="drawer-body" id="drawer-body"></div>
 </div>
 
-<script src="app.js"></script>
+<script src="app.js?v=20261021"></script>
 </body>
 </html>
